@@ -1,0 +1,19 @@
+# FUTURE.md — parking lot
+
+Rules: one line per idea. No elaboration. Nothing here gets built while a rung is open.
+
+- Watershed / distance-transform split of merged neighbouring filaments (PQ loses both when merged)
+- Skeleton-based fragment re-joining: connect components whose spines align within a gap of N px
+- Medoid annotator record as training target (highest mean IoU to the other records) vs random record
+- Soft targets from annotator vote fraction on multi-annotated files
+- Detector (YOLO11-seg / RF-DETR) -> crop refiner cascade, the public 0.55+ recipe
+- Native 2048 inference with 1024 sliding window + overlap blending
+- Disk mask prior: zero probabilities outside the solar disk (all GT lies within r <= 868 px)
+- Per-site (B/C/L/M/T/U) intensity normalisation or CLAHE input channel
+- Spine annotations as an auxiliary centreline head (barb-aware, EdgeAttNet paper arXiv 2509.02964)
+- Chirality labels are free supervision for a multi-task head (not scored, may regularise)
+- Encoder sweep: efficientnet-b4, convnext_tiny, mit_b2 (SegFormer) via smp
+- Lovász-hinge / focal-Tversky loss for the thin-structure imbalance
+- Confidence-ranked FP suppression: drop components whose mean prob < p_min (second knob after min_area)
+- Test-time fold agreement: keep an instance only if >= 2 folds predict it (LB-0.70 notebook's fusion rule)
+- Pseudo-label the 180 test images with the fold ensemble for a second training round (check rules first)
