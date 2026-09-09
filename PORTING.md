@@ -63,4 +63,4 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 
 | kernel version | date | change | OOF PQ | LB |
 |---|---|---|---|---|
-| — | — | — | — | — |
+| v1 | 2026-09-09 | Milestone-1 training push: U-Net/ResNet34 @1024, 512 crops, 20 epochs/fold, 5 grouped folds under 8.5 h budget, OOF sweep, fold ensemble | pending | pending |
