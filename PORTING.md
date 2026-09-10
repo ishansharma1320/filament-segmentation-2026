@@ -63,4 +63,27 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 
 | kernel version | date | change | OOF PQ | LB |
 |---|---|---|---|---|
-| v1 | 2026-09-09 | Milestone-1 training push: U-Net/ResNet34 @1024, 512 crops, 20 epochs/fold, 5 grouped folds under 8.5 h budget, OOF sweep, fold ensemble | pending | pending |
+| v1 | 2026-09-09 | Milestone-1 training push: U-Net/ResNet34 @1024, 512 crops, 20 epochs/fold, 5 grouped folds under 8.5 h budget, OOF sweep, fold ensemble | **0.3883** (thr 0.65, min_area 250) | pending |
+
+## 2026-09-10 — v1 results (runs/20260910-111121)
+
+**Run.** 4.0 h on a T4: cache 4.5 min, ~45 min per fold (epoch ~2 min incl. the 141-file
+no-TTA eval), OOF sweep 21 min. All 5 folds trained; time budget was not hit.
+
+**Per-fold** (per-epoch selection at thr 0.5 / min_area 150, no TTA -> with TTA):
+fold0 0.365 -> 0.372, fold1 0.349 -> 0.353, fold2 0.361 -> 0.367, fold3 0.372 -> 0.379,
+fold4 0.373 -> 0.380. Folds 1, 3, 4 were still rising at epoch 19: **20 epochs is short**.
+TTA is worth ~+0.006.
+
+**OOF sweep (5-fold, 1154 records).** PQ rises monotonically with threshold and min_area
+across the whole grid and peaks at the corner (thr 0.65, min_area 250): 0.3883, SQ 0.671,
+RQ 0.579, TP 5310 / FP 4831 / FN 2889. FP is the problem: the model emits ~1.7 blobs per GT
+filament; FN barely moves with threshold. The optimum is outside the grid -> local sweeps
+at thr 0.7-0.8, min_area up to 600, plus closing (rung 2).
+
+**Submission.** 1580 rows over 180 images (8.8/image; GT is ~7/record). Submitted as v1.
+
+**Lessons.** (1) `kaggle kernels output` paginates at 20 files; with 707 OOF PNGs the
+submission/summary/log never arrived until `pull_logs.sh` looped over page tokens (fixed).
+(2) OOF PQ 0.388 vs inter-annotator 0.34-vs-others: we're already above raw human
+agreement on the noisy files, consistent with the model learning the consensus.
