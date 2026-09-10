@@ -20,8 +20,18 @@ def main(path: str):
     stems = df.filament_id.str.rsplit("_", n=1).str[0]
     test = {f.rsplit(".", 1)[0] for f in test_files()}
     missing, extra = test - set(stems), set(stems) - test
-    areas = np.array([rle_to_mask(r).sum() for r in df.segmentation_rle])
+    areas, overlap = [], 0
+    for stem, g in df.groupby(stems, sort=False):
+        s = np.zeros((2048, 2048), np.int32)
+        for r in g.segmentation_rle:
+            m = rle_to_mask(r)
+            areas.append(int(m.sum()))
+            s += m
+        overlap += int((s > 1).sum())
+    areas = np.array(areas)
     print(f"rows={len(df)} images={stems.nunique()}/{len(test)} missing={len(missing)} extra={len(extra)}")
+    print(f"overlapping instance px: {overlap} (the evaluator ERRORS on any overlap)")
+    assert overlap == 0, "overlapping predicted instances"
     print(f"per-image rows: mean {len(df) / stems.nunique():.2f} max {stems.value_counts().max()}")
     print(f"area px: min {areas.min()} median {np.median(areas):.0f} max {areas.max()}")
     if missing or extra:

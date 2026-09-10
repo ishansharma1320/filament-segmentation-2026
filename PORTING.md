@@ -64,6 +64,8 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | kernel version | date | change | OOF PQ | LB |
 |---|---|---|---|---|
 | v1 | 2026-09-09 | Milestone-1 training push: U-Net/ResNet34 @1024, 512 crops, 20 epochs/fold, 5 grouped folds under 8.5 h budget, OOF sweep, fold ensemble | **0.3883** (thr 0.65, min_area 250) | **0.33** (public) |
+| v1 + local post-proc | 2026-09-10 | same maps, thr 0.6 / min_area 300 / close 5 / min_score 0.9 (offline sweep) | **0.4086** | — (not submitted; test maps not saved by v1) |
+| v2 | 2026-09-10 | EPOCHS 20→32; in-kernel sweep thr {0.55,0.65,0.75} x min_area {300,450} x min_score {0.8,0.9}, close 5; saves test/ prob maps | pending | pending |
 
 ## 2026-09-10 — v1 results (runs/20260910-111121)
 
@@ -97,8 +99,23 @@ masks dilated by the OOF-best amount — if LB moves much more than OOF, boundar
 **Local post-processing sweeps (rung 2, `scripts/sweep_postprocess.py`).**
 thr 0.6 / min_area 300 / close 5: 0.3941; thr 0.7 / min_area 400: 0.3937; thr 0.8 or
 min_area 600 fall off (FN grows faster than FP shrinks). Closing +0.002. Plateau ≈ 0.394
-(+0.006 over the kernel's corner pick). Per-component mean-prob filter (`min_score`)
-added as a second FP knob — sweep pending.
+(+0.006 over the kernel's corner pick).
+
+**Per-component mean-probability floor (`min_score`, rung 2) — PASS, +0.015.** At thr 0.6 /
+min_area 300 / close 5: none 0.3941, 0.70 0.3942, 0.75 0.3978, 0.80 0.3991, 0.85 0.4029,
+0.88 0.4054, **0.90 0.4086** (FP 3248, FN 3205 — balanced for the first time), 0.92 0.3886,
+0.94 0.2648. Sharp peak: the knob must be re-swept for every new model. Validity: same OOF
+maps, single variable, monotone until the cliff.
+
+**Dilation / erosion (boundary probe).** Same settings: -2 px 0.259, -1 px 0.374, 0 px
+0.394, +1 px 0.371, +2 px 0.307, +3 px 0.246. OOF sits on a knife edge at 0 px, so a
+rasterisation offset in the organiser's GT would cost a lot. LB probe: v1 masks +1 px.
+First attempt ERRORED — dilation made two instances share 2 px in one image, and the
+evaluator rejects overlap (see CLAUDE.md). Resubmitted with overlaps clipped.
+
+**Lessons (2).** A cleanup `rm -rf runs/2026*-1[0-9]...` meant for local debug runs also
+matched the pulled kernel run and deleted 467 MB of v1 outputs mid-analysis (re-pulled
+to `runs/20260910-125133`). Local runs now get a `local-` prefix; never glob-delete runs/.
 
 **Lessons.** (1) `kaggle kernels output` paginates at 20 files; with 707 OOF PNGs the
 submission/summary/log never arrived until `pull_logs.sh` looped over page tokens (fixed).

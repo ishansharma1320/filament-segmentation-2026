@@ -28,6 +28,12 @@ Consequences (do not re-derive these, do not violate them):
   a first-class knob (threshold, min_area), selected on OOF PQ, never on Dice.
 - Boundary accuracy only matters once IoU clears 0.5, then linearly (SQ).
 - Pixel Dice / BCE are training losses only. Model selection = OOF PQ.
+- **Predicted instances of one image must not overlap by a single pixel.** A submission
+  with 2 overlapping px in 1 image came back `SubmissionStatus.ERROR` (2026-09-10).
+  Connected-component instances are safe; anything that grows masks must clip against
+  pixels already taken. `scripts/check_submission.py` asserts zero overlap.
+- OOF is very boundary-sensitive: growing or shrinking every mask by 1 px costs 0.02 PQ,
+  2 px costs 0.09. Keep post-processing at native resolution and never resample masks.
 
 ## Data facts (measured, from the corpus — treat as ground truth)
 

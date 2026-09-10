@@ -90,7 +90,9 @@ EPOCH_THR = 0.5            # threshold used for per-epoch model selection (no TT
 MIN_AREA = 150             # component area (native px) below which a prediction is dropped
 THRESHOLDS = (0.55, 0.65, 0.75)         # final OOF sweep grid (v1 sweeps: plateau 0.6-0.7) ...
 MIN_AREAS = (300, 450)                  # ... x this (v1: 300-400 best, 600 too aggressive) ...
-MIN_SCORES = (0.0, 0.75)                # ... x per-component mean-prob floor (second FP knob)
+MIN_SCORES = (0.8, 0.9)                 # ... x per-component mean-prob floor (v1 OOF: peak 0.90,
+                                        #     +0.015 over none; 0.92 already collapses)
+CLOSE_KERNEL = 5           # morphological closing before components (v1 OOF: +0.002)
 TTA = True                 # 4-way flip TTA for OOF and test
 
 # --- smoke mode -----------------------------------------------------------------------

@@ -21,9 +21,9 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
-from config import (ARCH, BATCH, CACHE, CROP, ENCODER, EPOCH_THR, EPOCHS, EVAL_FILES, H, IMG_SIZE,
-                    LR, MAX_FOLDS, MAX_STEPS, MIN_AREA, MIN_AREAS, MIN_SCORES, N_FOLDS, ON_KAGGLE,
-                    POS_WEIGHT, RUNS, SAMPLES_PER_FILE, SEED, START_FOLD, T0, THRESHOLDS,
+from config import (ARCH, BATCH, CACHE, CLOSE_KERNEL, CROP, ENCODER, EPOCH_THR, EPOCHS, EVAL_FILES,
+                    H, IMG_SIZE, LR, MAX_FOLDS, MAX_STEPS, MIN_AREA, MIN_AREAS, MIN_SCORES, N_FOLDS,
+                    ON_KAGGLE, POS_WEIGHT, RUNS, SAMPLES_PER_FILE, SEED, START_FOLD, T0, THRESHOLDS,
                     TIME_BUDGET, TTA, W, WEIGHT_DECAY, WORKERS, log, seed_everything)
 from data import test_files
 from dataset import CropDataset, build_cache, load_gt_rles, load_meta
@@ -137,10 +137,10 @@ def sweep_postprocess(oof: dict, meta: dict, gt_rles: dict) -> tuple[float, int,
     for t in THRESHOLDS:
         for a in MIN_AREAS:
             for ms in MIN_SCORES:
-                s = score_probs(oof, meta, gt_rles, t, a, min_score=ms)
-                table.append({"thr": t, "min_area": a, "min_score": ms, **s})
-                log(f"sweep thr={t} min_area={a} min_score={ms}: PQ {s['pq']:.4f} SQ {s['sq']:.3f} "
-                    f"RQ {s['rq']:.3f} tp {s['tp']} fp {s['fp']} fn {s['fn']}")
+                s = score_probs(oof, meta, gt_rles, t, a, CLOSE_KERNEL, ms)
+                table.append({"thr": t, "min_area": a, "min_score": ms, "close": CLOSE_KERNEL, **s})
+                log(f"sweep thr={t} min_area={a} min_score={ms} close={CLOSE_KERNEL}: PQ {s['pq']:.4f} "
+                    f"SQ {s['sq']:.3f} RQ {s['rq']:.3f} tp {s['tp']} fp {s['fp']} fn {s['fn']}")
     best = max(table, key=lambda r: r["pq"])
     return best["thr"], best["min_area"], best["min_score"], table
 
@@ -191,7 +191,7 @@ def main():
         ms = float(np.median([ck.get("min_score", 0.0) for ck in cks]))
         probs = predict_test(models, meta["size"], device)
         save_test_probs(probs, out_dir)
-        write_submission(probs, thr, area, out_dir, min_score=ms)
+        write_submission(probs, thr, area, out_dir, CLOSE_KERNEL, ms)
         return
 
     # training mode
@@ -212,7 +212,8 @@ def main():
         p = predict_test([r["model"]], meta["size"], device)
         test_sum = p if test_sum is None else {k: test_sum[k] + p[k] for k in p}
         n_models += 1
-        write_submission({k: v / n_models for k, v in test_sum.items()}, EPOCH_THR, MIN_AREA, out_dir)
+        write_submission({k: v / n_models for k, v in test_sum.items()}, EPOCH_THR, MIN_AREA, out_dir,
+                         CLOSE_KERNEL)
         del r["model"]
         torch.cuda.empty_cache() if device.type == "cuda" else None
 
@@ -230,7 +231,7 @@ def main():
         torch.save(ck, r["ckpt"])
     test_mean = {k: v / n_models for k, v in test_sum.items()}
     save_test_probs(test_mean, out_dir)
-    write_submission(test_mean, thr, area, out_dir, min_score=ms)
+    write_submission(test_mean, thr, area, out_dir, CLOSE_KERNEL, ms)
     log(f"OOF PQ at selected (thr={thr}, min_area={area}, min_score={ms}): "
         f"{max(table, key=lambda x: x['pq'])['pq']:.4f}")
 
