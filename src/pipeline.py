@@ -22,9 +22,9 @@ import torch
 from torch.utils.data import DataLoader
 
 from config import (ARCH, BATCH, CACHE, CROP, ENCODER, EPOCH_THR, EPOCHS, EVAL_FILES, H, IMG_SIZE,
-                    LR, MAX_FOLDS, MAX_STEPS, MIN_AREA, MIN_AREAS, N_FOLDS, ON_KAGGLE, POS_WEIGHT,
-                    RUNS, SAMPLES_PER_FILE, SEED, START_FOLD, T0, THRESHOLDS, TIME_BUDGET, TTA,
-                    W, WEIGHT_DECAY, WORKERS, log, seed_everything)
+                    LR, MAX_FOLDS, MAX_STEPS, MIN_AREA, MIN_AREAS, MIN_SCORES, N_FOLDS, ON_KAGGLE,
+                    POS_WEIGHT, RUNS, SAMPLES_PER_FILE, SEED, START_FOLD, T0, THRESHOLDS,
+                    TIME_BUDGET, TTA, W, WEIGHT_DECAY, WORKERS, log, seed_everything)
 from data import test_files
 from dataset import CropDataset, build_cache, load_gt_rles, load_meta
 from evaluate import evaluate, predict_files, score_probs
@@ -45,17 +45,28 @@ def write_placeholder(out_dir: Path):
 
 
 def write_submission(test_probs: dict, threshold: float, min_area: int, out_dir: Path,
-                     close_kernel: int = 0) -> pd.DataFrame:
+                     close_kernel: int = 0, min_score: float = 0.0) -> pd.DataFrame:
     rows = []
     for name, prob in test_probs.items():
         stem = name.rsplit(".", 1)[0]
-        for k, m in enumerate(instances_never_empty(prob, threshold, min_area, close_kernel), 1):
+        inst = instances_never_empty(prob, threshold, min_area, close_kernel, min_score)
+        for k, m in enumerate(inst, 1):
             rows.append({"filament_id": f"{stem}_{k}", "segmentation_rle": mask_to_rle(m)})
     df = pd.DataFrame(rows, columns=["filament_id", "segmentation_rle"])
     assert df.filament_id.is_unique and len(df) >= len(test_probs)
     df.to_csv(out_dir / "submission.csv", index=False)
-    log(f"submission.csv: {len(df)} rows over {len(test_probs)} images (thr={threshold}, min_area={min_area})")
+    log(f"submission.csv: {len(df)} rows over {len(test_probs)} images "
+        f"(thr={threshold}, min_area={min_area}, min_score={min_score})")
     return df
+
+
+def save_test_probs(test_probs: dict, out_dir: Path):
+    """Ensemble-mean test prob maps as uint8 PNGs: lets post-processing be re-done
+    locally without another kernel run."""
+    d = out_dir / "test"
+    d.mkdir(exist_ok=True)
+    for name, p in test_probs.items():
+        cv2.imwrite(str(d / (name.rsplit(".", 1)[0] + ".png")), np.round(p * 255).astype(np.uint8))
 
 
 # --- training -----------------------------------------------------------------------------
@@ -121,16 +132,17 @@ def train_fold(fold: int, meta: dict, device, out_dir: Path, gt_rles: dict, epoc
             "oof": probs, "val_files": va, "model": model}
 
 
-def sweep_postprocess(oof: dict, meta: dict, gt_rles: dict) -> tuple[float, int, list]:
+def sweep_postprocess(oof: dict, meta: dict, gt_rles: dict) -> tuple[float, int, float, list]:
     table = []
     for t in THRESHOLDS:
         for a in MIN_AREAS:
-            s = score_probs(oof, meta, gt_rles, t, a)
-            table.append({"thr": t, "min_area": a, **s})
-            log(f"sweep thr={t} min_area={a}: PQ {s['pq']:.4f} SQ {s['sq']:.3f} RQ {s['rq']:.3f} "
-                f"tp {s['tp']} fp {s['fp']} fn {s['fn']}")
+            for ms in MIN_SCORES:
+                s = score_probs(oof, meta, gt_rles, t, a, min_score=ms)
+                table.append({"thr": t, "min_area": a, "min_score": ms, **s})
+                log(f"sweep thr={t} min_area={a} min_score={ms}: PQ {s['pq']:.4f} SQ {s['sq']:.3f} "
+                    f"RQ {s['rq']:.3f} tp {s['tp']} fp {s['fp']} fn {s['fn']}")
     best = max(table, key=lambda r: r["pq"])
-    return best["thr"], best["min_area"], table
+    return best["thr"], best["min_area"], best["min_score"], table
 
 
 def predict_test(models: list, size: int, device) -> dict:
@@ -151,7 +163,8 @@ def find_attached_checkpoints() -> list[Path]:
 
 
 # --- entry ---------------------------------------------------------------------------------
-OUT_DIR = RUNS if ON_KAGGLE else RUNS / time.strftime("%Y%m%d-%H%M%S")
+# local runs get a "local-" prefix so they can never be confused with pulled kernel runs
+OUT_DIR = RUNS if ON_KAGGLE else RUNS / time.strftime("local-%Y%m%d-%H%M%S")
 
 
 def main():
@@ -175,8 +188,10 @@ def main():
             log(f"  {p.name}: fold {ck.get('fold')} epoch {ck.get('epoch')} PQ {ck.get('pq', 0):.4f}")
         thr = float(np.median([ck.get("thr", EPOCH_THR) for ck in cks]))
         area = int(np.median([ck.get("min_area", MIN_AREA) for ck in cks]))
+        ms = float(np.median([ck.get("min_score", 0.0) for ck in cks]))
         probs = predict_test(models, meta["size"], device)
-        write_submission(probs, thr, area, out_dir)
+        save_test_probs(probs, out_dir)
+        write_submission(probs, thr, area, out_dir, min_score=ms)
         return
 
     # training mode
@@ -205,16 +220,18 @@ def main():
     for r in results:
         oof.update(r["oof"])
     log(f"OOF sweep over {len(oof)} files from {len(results)} folds")
-    thr, area, table = sweep_postprocess(oof, meta, gt_rles)
+    thr, area, ms, table = sweep_postprocess(oof, meta, gt_rles)
     summary = {"folds": [{k: v for k, v in r.items() if k in ("fold", "best_pq", "tta_pq")} for r in results],
-               "sweep": table, "best_thr": thr, "best_min_area": area}
+               "sweep": table, "best_thr": thr, "best_min_area": area, "best_min_score": ms}
     json.dump(summary, open(out_dir / "summary.json", "w"), indent=1)
     for r in results:  # stamp the selected post-processing into the checkpoints
         ck = torch.load(r["ckpt"], map_location="cpu", weights_only=False)
-        ck.update(thr=thr, min_area=area)
+        ck.update(thr=thr, min_area=area, min_score=ms)
         torch.save(ck, r["ckpt"])
-    write_submission({k: v / n_models for k, v in test_sum.items()}, thr, area, out_dir)
-    log(f"OOF PQ at selected (thr={thr}, min_area={area}): "
+    test_mean = {k: v / n_models for k, v in test_sum.items()}
+    save_test_probs(test_mean, out_dir)
+    write_submission(test_mean, thr, area, out_dir, min_score=ms)
+    log(f"OOF PQ at selected (thr={thr}, min_area={area}, min_score={ms}): "
         f"{max(table, key=lambda x: x['pq'])['pq']:.4f}")
 
 

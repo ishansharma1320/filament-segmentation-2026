@@ -19,6 +19,8 @@ if __name__ == "__main__":
     ap.add_argument("--thr", type=float, nargs="+", default=[0.4, 0.5, 0.6])
     ap.add_argument("--min-area", type=int, nargs="+", default=[100, 200, 400])
     ap.add_argument("--close", type=int, nargs="+", default=[0])
+    ap.add_argument("--min-score", type=float, nargs="+", default=[0.0])
+    ap.add_argument("--dilate", type=int, nargs="+", default=[0])
     a = ap.parse_args()
     meta, gt = load_meta(), load_gt_rles()
     oof = {}
@@ -29,9 +31,12 @@ if __name__ == "__main__":
     for t in a.thr:
         for m in a.min_area:
             for c in a.close:
-                s = score_probs(oof, meta, gt, t, m, c)
-                rows.append((s["pq"], t, m, c, s))
-                print(f"thr {t:.2f} min_area {m:4d} close {c}: PQ {s['pq']:.4f} SQ {s['sq']:.3f} "
-                      f"RQ {s['rq']:.3f} tp {s['tp']} fp {s['fp']} fn {s['fn']}")
+                for ms in a.min_score:
+                    for d in a.dilate:
+                        s = score_probs(oof, meta, gt, t, m, c, ms, d)
+                        rows.append((s["pq"], t, m, c, ms, d, s))
+                        print(f"thr {t:.2f} min_area {m:4d} close {c} min_score {ms:.2f} dilate {d:+d}: "
+                              f"PQ {s['pq']:.4f} SQ {s['sq']:.3f} RQ {s['rq']:.3f} "
+                              f"tp {s['tp']} fp {s['fp']} fn {s['fn']}", flush=True)
     best = max(rows)
-    print("BEST", best[:4])
+    print("BEST", best[:6])

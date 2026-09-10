@@ -71,7 +71,7 @@ POSITIVE_BIAS = 0.7        # fraction of crops centred on a filament pixel
 # --- model / training -----------------------------------------------------------------
 ARCH = "unet"              # smp architecture: unet | unetpp | fpn | deeplab | manet
 ENCODER = "resnet34"
-EPOCHS = 20
+EPOCHS = 32                # v1 (20 epochs): 3 of 5 folds still rising at the last epoch
 BATCH = 8
 LR = 3e-4
 WEIGHT_DECAY = 1e-4
@@ -88,8 +88,9 @@ TIME_BUDGET = 8.5 * 3600   # seconds; Kaggle GPU sessions are capped at 12 h
 # --- post-processing / selection ------------------------------------------------------
 EPOCH_THR = 0.5            # threshold used for per-epoch model selection (no TTA)
 MIN_AREA = 150             # component area (native px) below which a prediction is dropped
-THRESHOLDS = (0.35, 0.45, 0.55, 0.65)   # final OOF sweep grid ...
-MIN_AREAS = (100, 250)                  # ... x this
+THRESHOLDS = (0.55, 0.65, 0.75)         # final OOF sweep grid (v1 sweeps: plateau 0.6-0.7) ...
+MIN_AREAS = (300, 450)                  # ... x this (v1: 300-400 best, 600 too aggressive) ...
+MIN_SCORES = (0.0, 0.75)                # ... x per-component mean-prob floor (second FP knob)
 TTA = True                 # 4-way flip TTA for OOF and test
 
 # --- smoke mode -----------------------------------------------------------------------
@@ -98,5 +99,5 @@ MAX_STEPS = 0              # 0 = full epoch
 EVAL_FILES = 0             # 0 = whole validation fold
 if DEBUG:
     EPOCHS, MAX_STEPS, EVAL_FILES, MAX_FOLDS = 1, 20, 8, 2
-    THRESHOLDS, MIN_AREAS = (0.45, 0.55), (150,)
+    THRESHOLDS, MIN_AREAS, MIN_SCORES = (0.45, 0.55), (150,), (0.0,)
     WORKERS = 0            # macOS spawn cannot pickle notebook-namespace classes; Kaggle forks

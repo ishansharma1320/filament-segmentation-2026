@@ -26,11 +26,12 @@ def predict_files(model, files, size, device, split="train", tta=True, batch_siz
 
 
 def score_probs(probs: dict, meta: dict, gt_rles: dict, threshold: float, min_area: int,
-                close_kernel: int = 0) -> dict:
+                close_kernel: int = 0, min_score: float = 0.0, dilate: int = 0) -> dict:
     """probs: {file_name: prob map (any size, float or uint8)} -> PQ summary."""
     acc = PQAccumulator()
     for name, prob in probs.items():
-        preds = masks_to_rles(probs_to_instances(prob, threshold, min_area, close_kernel))
+        preds = masks_to_rles(probs_to_instances(prob, threshold, min_area, close_kernel, min_score,
+                                                 dilate=dilate))
         for rid in meta["records_by_file"][name]:
             acc.add(gt_rles[rid], preds)
     return acc.summary()

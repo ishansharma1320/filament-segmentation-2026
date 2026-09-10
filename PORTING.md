@@ -63,7 +63,7 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 
 | kernel version | date | change | OOF PQ | LB |
 |---|---|---|---|---|
-| v1 | 2026-09-09 | Milestone-1 training push: U-Net/ResNet34 @1024, 512 crops, 20 epochs/fold, 5 grouped folds under 8.5 h budget, OOF sweep, fold ensemble | **0.3883** (thr 0.65, min_area 250) | pending |
+| v1 | 2026-09-09 | Milestone-1 training push: U-Net/ResNet34 @1024, 512 crops, 20 epochs/fold, 5 grouped folds under 8.5 h budget, OOF sweep, fold ensemble | **0.3883** (thr 0.65, min_area 250) | **0.33** (public) |
 
 ## 2026-09-10 — v1 results (runs/20260910-111121)
 
@@ -82,6 +82,23 @@ filament; FN barely moves with threshold. The optimum is outside the grid -> loc
 at thr 0.7-0.8, min_area up to 600, plus closing (rung 2).
 
 **Submission.** 1580 rows over 180 images (8.8/image; GT is ~7/record). Submitted as v1.
+
+**LB: 0.33 public vs 0.388 OOF.** Diagnostics on the OOF maps (`scripts/diagnose_oof.py`,
+thr 0.7 / min_area 400): pooled 0.3937, mean-per-record 0.3932, mean-per-file 0.3916 —
+aggregation choice cannot explain it. Single-annotator files 0.398 vs multi 0.391 — nor
+annotator mix. Random 90-file subsets: sd 0.011 (5-95%: 0.376-0.410) — nor public-subset
+noise (0.33 is ~5 sd out). No FP lies beyond r = 868 (FPs sit nearer the limb than TPs:
+median r 613 vs 532, but on-disk). So the gap is systematic and unexplained; leading
+suspects: boundary/rasterisation bias between our masks and the organiser's GT RLEs (SQ is
+0.67, so many matches sit just above IoU 0.5), or a test annotation set unlike train.
+Probe: per-component dilation/erosion swept on OOF, then one LB submission of the v1
+masks dilated by the OOF-best amount — if LB moves much more than OOF, boundary bias it is.
+
+**Local post-processing sweeps (rung 2, `scripts/sweep_postprocess.py`).**
+thr 0.6 / min_area 300 / close 5: 0.3941; thr 0.7 / min_area 400: 0.3937; thr 0.8 or
+min_area 600 fall off (FN grows faster than FP shrinks). Closing +0.002. Plateau ≈ 0.394
+(+0.006 over the kernel's corner pick). Per-component mean-prob filter (`min_score`)
+added as a second FP knob — sweep pending.
 
 **Lessons.** (1) `kaggle kernels output` paginates at 20 files; with 707 OOF PNGs the
 submission/summary/log never arrived until `pull_logs.sh` looped over page tokens (fixed).
