@@ -86,6 +86,8 @@ Pushing while a version runs CANCELS it: check status first. Kaggle GPU quota ~3
 
 - Every change is gated on OOF PQ over all annotator records (grouped folds), logged in
   PORTING.md with its delta, including failures. LB is confirmation, not selection.
+  Measured 2026-09-10: public LB ≈ OOF − 0.06 and it tracks OOF under perturbations
+  (±1 px probes), so the offset is the test set, not the evaluator. 5 submissions/day.
 - Single-fold PQ differences under ~0.01 are noise at this label quality; use >= 2 folds
   or the full 5-fold OOF before promoting a change.
 - Any idea not on the current rung goes to `FUTURE.md`, one line, move on.

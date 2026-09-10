@@ -113,6 +113,14 @@ rasterisation offset in the organiser's GT would cost a lot. LB probe: v1 masks 
 First attempt ERRORED — dilation made two instances share 2 px in one image, and the
 evaluator rejects overlap (see CLAUDE.md). Resubmitted with overlaps clipped.
 
+**Probe verdict — boundary bias RULED OUT.** LB: v1 0.33, +1 px 0.32, -1 px 0.31; OOF
+predicted -0.02 for both (LB shows 2 decimals). The leaderboard responds to boundary
+perturbations exactly as our OOF does, so (a) the evaluator matches `src/metric.py` and the
+organiser's GT rasterisation matches ours, and (b) the 0.06 OOF→LB offset is a property
+of the test annotations (harder images / a different annotator pool), i.e. roughly a
+constant shift. **OOF remains the selector; expect LB ≈ OOF - 0.06.** Three submissions
+spent on this; the daily limit is 5.
+
 **Lessons (2).** A cleanup `rm -rf runs/2026*-1[0-9]...` meant for local debug runs also
 matched the pulled kernel run and deleted 467 MB of v1 outputs mid-analysis (re-pulled
 to `runs/20260910-125133`). Local runs now get a `local-` prefix; never glob-delete runs/.
