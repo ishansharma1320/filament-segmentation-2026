@@ -65,7 +65,25 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 |---|---|---|---|---|
 | v1 | 2026-09-09 | Milestone-1 training push: U-Net/ResNet34 @1024, 512 crops, 20 epochs/fold, 5 grouped folds under 8.5 h budget, OOF sweep, fold ensemble | **0.3883** (thr 0.65, min_area 250) | **0.33** (public) |
 | v1 + local post-proc | 2026-09-10 | same maps, thr 0.6 / min_area 300 / close 5 / min_score 0.9 (offline sweep) | **0.4086** | — (not submitted; test maps not saved by v1) |
-| v2 | 2026-09-10 | EPOCHS 20→32; in-kernel sweep thr {0.55,0.65,0.75} x min_area {300,450} x min_score {0.8,0.9}, close 5; saves test/ prob maps | pending | pending |
+| v2 | 2026-09-10 | EPOCHS 20→32; in-kernel sweep thr {0.55,0.65,0.75} x min_area {300,450} x min_score {0.8,0.9}, close 5; saves test/ prob maps | **0.4100** (thr 0.65, min_area 300, min_score 0.9) | pending |
+
+## 2026-09-10 — v2 results (runs/20260910-190750)
+
+**Run.** 5.65 h on a T4 (~62 min/fold, sweep 21 min). Per-fold at thr 0.5 / min_area 150
+(no TTA -> TTA): fold0 0.368 -> 0.376, fold1 0.348 -> 0.355, fold2 0.370 -> 0.375, fold3
+0.387 -> 0.392, fold4 0.374 -> 0.386. Versus v1 (20 epochs): +0.004 to +0.013 raw. Best
+epochs 23-31, last-5 means within 0.003 of best: **32 epochs is converged; more epochs are
+not the lever.**
+
+**Sweep (12 combos).** thr 0.65 / min_area 300 / min_score 0.9 / close 5 -> **0.4100**
+(SQ 0.674, RQ 0.608, TP 5135 / FP 3561 / FN 3064). thr 0.55 with the same knobs 0.4089;
+thr 0.75 loses 0.015. **After post-processing, v2 beats v1-with-the-same-post-processing by
+only +0.0014 — noise.** The training-length rung is closed: the model family is the limit.
+
+**Reading of the FP/FN balance.** At the optimum, ~40% of predictions are unmatched and
+~37% of GT filaments are missed. SQ 0.67 means matched masks are loose. Both point at the
+next rungs: instance-level quality (rung 4, detector -> refiner) and consensus targets
+(rung 5) rather than more of the same semantic model.
 
 ## 2026-09-10 — v1 results (runs/20260910-111121)
 
