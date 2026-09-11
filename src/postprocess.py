@@ -48,6 +48,10 @@ def probs_to_instances(prob: np.ndarray, threshold: float = 0.5, min_area: int =
         if fill_holes:
             contours, _ = cv2.findContours(sub, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             cv2.drawContours(sub, contours, -1, 1, thickness=cv2.FILLED)
+            # a hole may contain ANOTHER component; never paint over it (instances must
+            # not overlap - the evaluator errors on a single shared pixel)
+            others = labels[y:y + h, x:x + w]
+            sub[(others != 0) & (others != lab)] = 0
         m = np.zeros(prob.shape, np.uint8)
         if dilate:
             k = abs(dilate)
@@ -63,6 +67,21 @@ def probs_to_instances(prob: np.ndarray, threshold: float = 0.5, min_area: int =
                 continue
         m[y:y + h, x:x + w] = sub
         out.append(m)
+    return resolve_overlaps(out)
+
+
+def resolve_overlaps(masks: list[np.ndarray]) -> list[np.ndarray]:
+    """Hard guarantee that no two instances share a pixel (the evaluator errors on one
+    shared pixel). Earlier (larger) instances win; an instance emptied by clipping is dropped."""
+    if len(masks) < 2:
+        return masks
+    taken = np.zeros(masks[0].shape, bool)
+    out = []
+    for m in masks:
+        b = m.astype(bool) & ~taken
+        if b.any():
+            taken |= b
+            out.append(b.astype(np.uint8))
     return out
 
 

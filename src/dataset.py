@@ -17,7 +17,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from config import CACHE, IMG_SIZE, N_FOLDS, ON_KAGGLE, POSITIVE_BIAS, SEED, log
+from config import CACHE, IMG_SIZE, N_FOLDS, POSITIVE_BIAS, SEED, TARGET_MODE, log
 from data import (annotation_rle, load_coco, make_folds, record_semantic_mask, test_files,
                   test_img_dir, train_files, train_img_dir)
 
@@ -52,10 +52,36 @@ def build_cache(size: int = IMG_SIZE, n_folds: int = N_FOLDS) -> dict:
             cv2.imwrite(str(out), cv2.resize(im, (size, size), interpolation=cv2.INTER_AREA))
     with open(CACHE / "gt_rles.pkl", "wb") as fh:
         pickle.dump(gt_rles, fh)
-    meta = {"size": size, "records_by_file": by_file, "folds": make_folds(train_files(), n_folds, SEED)}
+    meta = {"size": size, "records_by_file": by_file, "folds": make_folds(train_files(), n_folds, SEED),
+            "medoid": medoid_records(by_file, msk_dir)}
     json.dump(meta, open(CACHE / "meta.json", "w"))
     log(f"cache ready: {len(by_file)} files, {len(gt_rles)} records, {len(test_files())} test")
     return meta
+
+
+def medoid_records(by_file: dict, msk_dir) -> dict:
+    """{file: record_id} — for multi-annotator files, the record whose union mask has
+    the highest mean IoU with the other records' masks (the consensus annotator).
+    Single-record files map to their only record."""
+    out = {}
+    for f, rids in by_file.items():
+        if len(rids) == 1:
+            out[f] = rids[0]
+            continue
+        masks = [_read(msk_dir / f"{r}.png") > 127 for r in rids]
+        best, best_score = rids[0], -1.0
+        for i, r in enumerate(rids):
+            ious = []
+            for j, m in enumerate(masks):
+                if j == i:
+                    continue
+                u = (masks[i] | m).sum()
+                ious.append((masks[i] & m).sum() / u if u else 1.0)
+            s = float(np.mean(ious))
+            if s > best_score:
+                best, best_score = r, s
+        out[f] = best
+    return out
 
 
 def load_meta() -> dict:
@@ -82,10 +108,11 @@ class CropDataset(Dataset):
     record at random for the file (label augmentation across annotators)."""
 
     def __init__(self, files: list[str], meta: dict, crop: int, samples_per_file: int,
-                 positive_bias: float = POSITIVE_BIAS):
+                 positive_bias: float = POSITIVE_BIAS, target_mode: str = TARGET_MODE):
         self.files, self.meta = files, meta
         self.S, self.crop, self.spf, self.pos = meta["size"], crop, samples_per_file, positive_bias
         self.img_dir, self.msk_dir = CACHE / f"img{self.S}", CACHE / f"mask{self.S}"
+        self.target_mode = target_mode
 
     def __len__(self):
         return len(self.files) * self.spf
@@ -93,7 +120,10 @@ class CropDataset(Dataset):
     def __getitem__(self, i):
         f = self.files[i // self.spf]
         stem = f.rsplit(".", 1)[0]
-        rid = random.choice(self.meta["records_by_file"][f])
+        if self.target_mode == "medoid":
+            rid = self.meta["medoid"][f]
+        else:
+            rid = random.choice(self.meta["records_by_file"][f])
         img = _read(self.img_dir / f"{stem}.png")
         msk = _read(self.msk_dir / f"{rid}.png") > 127
 

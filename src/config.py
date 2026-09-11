@@ -77,6 +77,9 @@ LR = 3e-4
 WEIGHT_DECAY = 1e-4
 POS_WEIGHT = 2.0           # BCE positive weight; ~0.3 % of pixels are filament
 SAMPLES_PER_FILE = 4       # crops drawn per file per epoch
+TARGET_MODE = "medoid"     # "random": one annotator record per crop at random (v1/v2);
+                           # "medoid": the record with the highest mean mask-IoU to the
+                           # other records of the same file (consensus target, rung 5)
 WORKERS = 3 if ON_KAGGLE else 4
 
 # --- folds / budget -------------------------------------------------------------------
