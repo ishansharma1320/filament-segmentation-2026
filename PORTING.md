@@ -66,7 +66,19 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v1 | 2026-09-09 | Milestone-1 training push: U-Net/ResNet34 @1024, 512 crops, 20 epochs/fold, 5 grouped folds under 8.5 h budget, OOF sweep, fold ensemble | **0.3883** (thr 0.65, min_area 250) | **0.33** (public) |
 | v1 + local post-proc | 2026-09-10 | same maps, thr 0.6 / min_area 300 / close 5 / min_score 0.9 (offline sweep) | **0.4086** | — (not submitted; test maps not saved by v1) |
 | v2 | 2026-09-10 | EPOCHS 20→32; in-kernel sweep thr {0.55,0.65,0.75} x min_area {300,450} x min_score {0.8,0.9}, close 5; saves test/ prob maps | **0.4100** (thr 0.65, min_area 300, min_score 0.9) | **0.36** (public) |
-| v3 | 2026-09-11 | TARGET_MODE medoid (consensus annotator record per file instead of random record); hard no-overlap guard + hole-fill fix in postprocess (neutral on v2 OOF: 0.4100) | pending | pending |
+| v3 | 2026-09-11 | TARGET_MODE medoid (consensus annotator record per file instead of random record); hard no-overlap guard + hole-fill fix in postprocess (neutral on v2 OOF: 0.4100) | 0.4082 (same knobs as v2) | see below |
+
+## 2026-09-17 — v3 verdict: medoid targets WASH (runs/20260917-143130)
+
+Same recipe as v2 with each multi-annotator file trained on its consensus (medoid) record
+instead of a random record. OOF at the same selected knobs: **0.4082 vs 0.4100** (-0.002,
+inside noise). Per-fold raw (thr 0.5 / min_area 150, TTA): 0.381 / 0.360 / 0.374 / 0.387 /
+0.381 vs v2 0.376 / 0.355 / 0.375 / 0.392 / 0.386 — three up, two down, all < 0.01.
+FP/FN at the optimum essentially unchanged (3562/3080 vs 3561/3064). Validity: single
+variable (TARGET_MODE), same folds, same sweep grid, training converged (best epochs
+25-31). **Verdict: WASH. Rung 5 closed; TARGET_MODE reverts to "random".** Reading: the
+consensus record removes ~1/3 of the label noise on 296 files, but the semantic model's
+errors are not annotator-choice errors — they are merges, fragments and loose boundaries.
 
 ## 2026-09-10 — v2 results (runs/20260910-190750)
 
