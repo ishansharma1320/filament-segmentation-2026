@@ -14,9 +14,11 @@ from rle import masks_to_rles
 
 
 @torch.no_grad()
-def predict_files(model, files, size, device, split="train", tta=True, batch_size=2):
+def predict_files(model, files, size, device, split="train", tta=True, batch_size=None):
     """Yield (file_name, prob map float32 at model resolution (size x size))."""
     model.eval()
+    if batch_size is None:
+        batch_size = 2 if size <= 1024 else 1   # a 2048^2 U-Net forward is ~4x the activations
     dl = DataLoader(FullImageDataset(files, size, split), batch_size=batch_size,
                     num_workers=min(WORKERS, 2), shuffle=False)
     for x, names in dl:

@@ -64,14 +64,15 @@ def find_data_root() -> Path:
 
 # --- image / crops --------------------------------------------------------------------
 H = W = 2048               # native GONG frame; the metric is computed at this size
-IMG_SIZE = 1024            # working resolution: filament thickness ~13 px native -> ~6 px
+IMG_SIZE = 2048            # working resolution. v1-v3: 1024 (thickness ~13 px native -> ~6 px);
+                           # v4: native 2048 (rung 3) - barbs and thin sections survive
 CROP = 512                 # training crop taken from the IMG_SIZE image
 POSITIVE_BIAS = 0.7        # fraction of crops centred on a filament pixel
 
 # --- model / training -----------------------------------------------------------------
 ARCH = "unet"              # smp architecture: unet | unetpp | fpn | deeplab | manet
 ENCODER = "resnet34"
-EPOCHS = 32                # v1 (20 epochs): 3 of 5 folds still rising at the last epoch
+EPOCHS = 28                # v1 (20 epochs): still rising; v2/v3 (32): converged by 25-31
 BATCH = 8
 LR = 3e-4
 WEIGHT_DECAY = 1e-4
@@ -106,3 +107,4 @@ if DEBUG:
     EPOCHS, MAX_STEPS, EVAL_FILES, MAX_FOLDS = 1, 20, 8, 2
     THRESHOLDS, MIN_AREAS, MIN_SCORES = (0.45, 0.55), (150,), (0.0,)
     WORKERS = 0            # macOS spawn cannot pickle notebook-namespace classes; Kaggle forks
+    TTA = False            # 4 passes x 180 test images at 2048 is too slow for a smoke test

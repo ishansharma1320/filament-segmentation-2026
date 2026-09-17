@@ -149,10 +149,11 @@ def predict_test(models: list, size: int, device) -> dict:
     """Average prob maps of several models over the test set. {file: float32 (size,size)}."""
     files = test_files()
     acc = {}
+    # float16: 180 maps at 2048^2 are 3 GB in float32; several such dicts coexist
     for m in models:
         for name, p in predict_files(m, files, size, device, split="test", tta=TTA):
-            acc[name] = acc[name] + p if name in acc else p.astype(np.float32)
-    return {k: v / len(models) for k, v in acc.items()}
+            acc[name] = (acc[name] + p.astype(np.float16)) if name in acc else p.astype(np.float16)
+    return {k: (v / len(models)).astype(np.float16) for k, v in acc.items()}
 
 
 def find_attached_checkpoints() -> list[Path]:
@@ -210,7 +211,8 @@ def main():
         results.append(r)
         # keep the run scoreable: ensemble of folds so far
         p = predict_test([r["model"]], meta["size"], device)
-        test_sum = p if test_sum is None else {k: test_sum[k] + p[k] for k in p}
+        test_sum = p if test_sum is None else {k: (test_sum[k] + p[k]).astype(np.float16) for k in p}
+        del p
         n_models += 1
         write_submission({k: v / n_models for k, v in test_sum.items()}, EPOCH_THR, MIN_AREA, out_dir,
                          CLOSE_KERNEL)

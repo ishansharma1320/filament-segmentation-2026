@@ -13,7 +13,7 @@ def upsample(prob: np.ndarray) -> np.ndarray:
         prob = prob.astype(np.float32) / 255.0
     if prob.shape != (H, W):
         prob = cv2.resize(prob.astype(np.float32), (W, H), interpolation=cv2.INTER_LINEAR)
-    return prob
+    return prob.astype(np.float32, copy=False)
 
 
 def probs_to_instances(prob: np.ndarray, threshold: float = 0.5, min_area: int = 150,
