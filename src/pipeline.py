@@ -1,6 +1,7 @@
 """Orchestrator. Same entry point locally and in the Kaggle kernel.
 
 main():  placeholder submission -> cache -> grouped folds
+         -> [PIPELINE == "cascade": hand over to cascade.main_cascade (rung 4) and return]
          -> [inference mode if fold*_best.pt checkpoints are attached under /kaggle/input]
          -> else train folds until TIME_BUDGET, saving fold{k}_best.pt + OOF prob maps,
             rewriting submission.csv after every fold so the run is always scoreable
@@ -23,8 +24,9 @@ from torch.utils.data import DataLoader
 
 from config import (ARCH, BATCH, CACHE, CLOSE_KERNEL, CROP, ENCODER, EPOCH_THR, EPOCHS, EVAL_FILES,
                     H, IMG_SIZE, LR, MAX_FOLDS, MAX_STEPS, MIN_AREA, MIN_AREAS, MIN_SCORES, N_FOLDS,
-                    ON_KAGGLE, POS_WEIGHT, RUNS, SAMPLES_PER_FILE, SEED, START_FOLD, T0, THRESHOLDS,
-                    TIME_BUDGET, TTA, W, WEIGHT_DECAY, WORKERS, log, seed_everything)
+                    ON_KAGGLE, PIPELINE, POS_WEIGHT, RUNS, SAMPLES_PER_FILE, SEED, START_FOLD, T0,
+                    THRESHOLDS, TIME_BUDGET, TTA, W, WEIGHT_DECAY, WORKERS, log, seed_everything)
+from cascade import main_cascade
 from data import test_files
 from dataset import CropDataset, build_cache, load_gt_rles, load_meta
 from evaluate import evaluate, predict_files, score_probs
@@ -178,6 +180,10 @@ def main():
 
     meta = build_cache(IMG_SIZE, N_FOLDS)
     gt_rles = load_gt_rles()
+
+    if PIPELINE == "cascade":          # rung 4: detector -> crop refiner (cascade.py)
+        main_cascade(meta, gt_rles, out_dir)
+        return
 
     attached = find_attached_checkpoints()
     if attached:

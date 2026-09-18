@@ -6,7 +6,9 @@ Rules: one line per idea. No elaboration. Nothing here gets built while a rung i
 - Skeleton-based fragment re-joining: connect components whose spines align within a gap of N px
 - Medoid annotator record as training target (highest mean IoU to the other records) vs random record
 - Soft targets from annotator vote fraction on multi-annotated files
-- Detector (YOLO11-seg / RF-DETR) -> crop refiner cascade, the public 0.55+ recipe
+- Refiner negative seeds (random empty boxes, empty target) so FP boxes get an empty mask, not a hallucination
+- Refiner 4th channel: the semantic U-Net prob map (fusion of rungs 1 and 4)
+- YOLO11m / imgsz 1280 / more epochs once the box P/R diagnostic says the detector is the bottleneck
 - Native 2048 inference with 1024 sliding window + overlap blending
 - Disk mask prior: zero probabilities outside the solar disk (all GT lies within r <= 868 px)
 - Per-site (B/C/L/M/T/U) intensity normalisation or CLAHE input channel

@@ -1,6 +1,7 @@
 torch>=2.3
 torchvision
 segmentation-models-pytorch
+ultralytics
 timm
 opencv-python-headless
 pycocotools

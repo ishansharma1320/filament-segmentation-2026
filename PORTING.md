@@ -67,7 +67,71 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v1 + local post-proc | 2026-09-10 | same maps, thr 0.6 / min_area 300 / close 5 / min_score 0.9 (offline sweep) | **0.4086** | — (not submitted; test maps not saved by v1) |
 | v2 | 2026-09-10 | EPOCHS 20→32; in-kernel sweep thr {0.55,0.65,0.75} x min_area {300,450} x min_score {0.8,0.9}, close 5; saves test/ prob maps | **0.4100** (thr 0.65, min_area 300, min_score 0.9) | **0.36** (public) |
 | v3 | 2026-09-11 | TARGET_MODE medoid (consensus annotator record per file instead of random record); hard no-overlap guard + hole-fill fix in postprocess (neutral on v2 OOF: 0.4100) | 0.4082 (same knobs as v2) | **0.36** (= v2) |
+| v5 | 2026-09-18 | **Rung 4: detector -> crop-refiner cascade** (PIPELINE=cascade). YOLO11s boxes @1024 on the medoid record, 40 epochs/fold; per-box 256 px native crop refiner U-Net/R34 with [img, CLAHE, box seed] input, 12 epochs on every (record, filament); OOF sweep conf x thr x min_area; test boxes fused across folds (WBF) | pending | — |
 | v4 | 2026-09-17 | Rung 3: native 2048 resolution (IMG_SIZE 1024→2048, same 512 crops so each crop sees 1/4 the context, batch-1 full-frame inference, float16 test accumulation); EPOCHS 28; TARGET_MODE random | 0.3910 (thr 0.55, min_area 300, min_score 0.9) | not submitted (FAIL) |
+
+## 2026-09-18 — v5 push: rung 4, detector -> crop-refiner cascade (cloud session)
+
+**Session note.** First hands-free cloud session. The environment's default network policy
+blocked `api.kaggle.com` / `www.kaggle.com` (proxy 403 on CONNECT); fixed by Ishan switching
+the cloud environment's network access, after which `setup_cloud.sh` ran clean (data, cache,
+pull of v4 outputs). `download.pytorch.org` / `huggingface.co` stay blocked, so the local
+smoke test builds the refiner without ImageNet weights (`pretrained=not DEBUG`); the kernel
+has internet and downloads them.
+
+**Why this rung.** v2's failure profile at the optimum is 40 % unmatched predictions, 37 %
+missed GT and SQ 0.67; SQ is at the annotator ceiling (v4 proved resolution does not move
+it), so the only headroom is RQ: per-object existence decisions and one mask per object.
+A box detector gives exactly that (NMS = instance separation, confidence = FP/FN knob);
+a per-box refiner gives one mask per detection that cannot merge with a neighbour.
+
+**Design (src/detector.py, src/refiner.py, src/cascade.py; the semantic path is intact
+behind `PIPELINE = "semantic"`).**
+- Detector: ultralytics YOLO11s, imgsz 1024 on the cached 1024 PNGs (so no resize at all),
+  40 epochs/fold, flips both axes, single class. Labels are static txt files, so one
+  annotator record per file: the medoid (consensus) record — a union of records would
+  teach the detector to emit duplicates. Predict at conf >= 0.1, NMS IoU 0.5, boxes scaled
+  to native px.
+- Refiner: smp U-Net/ResNet34, 3 input channels at native resolution: image crop, CLAHE of
+  the crop, and a "seed" = the detector box grown 25 % per side, filled. The seed says WHICH
+  filament to segment when several share the crop; the target is that one annotation's
+  mask. Crop side = max(256, 1.4 x box long side), centred; the median filament (96 px)
+  therefore trains and infers at native pixels with no resampling; only crops > 256 px are
+  downscaled and their prob map upscaled back before thresholding (masks never resampled).
+  Training samples every (record, filament) pair of the train files (~6.5k crops/fold,
+  label augmentation across annotators), 12 epochs OneCycle, BCE+Dice; GT boxes are
+  jittered (shift 15 %, scale 0.8-1.25, pad 0.5-1.5x) so seeds look like detector boxes.
+  Epoch selection: val Dice on clean GT-box crops.
+- Instances: confidence order; per crop keep only the components that touch the seed box
+  (neighbours in the crop are dropped), drop < min_area; a mask with > 50 % of its pixels
+  already taken by a higher-confidence instance is a duplicate and is dropped, otherwise it
+  is clipped -> zero overlap by construction.
+- OOF: each fold's detector + refiner on its val files; crop records (uint8 probs + bounds
+  + conf) are saved to `oof_crops/*.npz` so every knob can be re-swept offline
+  (`scripts/sweep_cascade.py`). In-kernel sweep: conf {0.15..0.5} x thr {0.5,0.6,0.7} x
+  min_area {100,200}, selection by pooled PQ over all 1154 records, as always.
+- Test: boxes of the fold detectors fused by weighted boxes fusion (IoU 0.55, fused conf =
+  sum of per-model best conf / n_models -> fold agreement is rewarded), refined by the
+  refiner ensemble with 4-flip TTA on the crops, thresholded with the OOF-selected knobs;
+  `test_crops/*.npz` saved. After every fold an intermediate submission (default knobs) keeps
+  the run scoreable.
+- Diagnostics logged per fold: box-level P/R at conf 0.2/0.3/0.5 against all records —
+  says whether the detector or the refiner is the bottleneck.
+
+**Caveats stated up front.** (1) OOF confidences come from one detector per image, test
+confidences from the 5-fold fusion; the selected conf cut is therefore slightly
+conservative on test (fusion pulls singleton boxes down). (2) The refiner is trained on
+positive seeds only: an FP box gets a hallucinated mask, so FP control is the detector's
+conf cut alone (negative seeds are a FUTURE line). (3) Local budget estimate: ~45-60 min per
+fold on a T4 (YOLO ~25 min, refiner ~15-25 min, inference few min) -> 5 folds well inside
+8.5 h.
+
+**Verified locally.** `FILAMENT_DEBUG=1 scripts/run_notebook_local.py` on CPU: 2 folds,
+1 YOLO epoch on 16 files, 20 refiner steps, sweep, fused test submission, `oof_crops` /
+`test_crops` written, exit 0 (2.5 min). Refiner targets lie 100 % inside their seed masks;
+instance assembly unit-tested (duplicate dropped, off-seed blob dropped, zero overlap).
+
+**Pushed as v5.** Gate: OOF PQ vs v2's 0.4100 at its selected knobs.
 
 ## 2026-09-18 — v4 verdict: native 2048 resolution FAIL (runs/20260918-075110)
 
