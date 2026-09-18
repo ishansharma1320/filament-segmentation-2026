@@ -108,3 +108,32 @@ if DEBUG:
     THRESHOLDS, MIN_AREAS, MIN_SCORES = (0.45, 0.55), (150,), (0.0,)
     WORKERS = 0            # macOS spawn cannot pickle notebook-namespace classes; Kaggle forks
     TTA = False            # 4 passes x 180 test images at 2048 is too slow for a smoke test
+
+# --- rung 4: detector -> crop-refiner cascade ------------------------------------------
+# PIPELINE selects the recipe: "semantic" = v1-v4 (U-Net prob map -> components);
+# "cascade" = YOLO box detector -> per-box crop refiner -> one mask per detection.
+PIPELINE = "cascade"
+DET_MODEL = "yolo11s.pt"    # ultralytics COCO-pretrained weights (downloaded; internet ON)
+DET_IMGSZ = 1024            # trains on the cached 1024 px PNGs, so no resize happens at all
+DET_EPOCHS = 40
+DET_BATCH = 8
+DET_LABEL_RECORD = "medoid" # YOLO labels are static files: one record per file, the consensus one
+DET_CONF_MIN = 0.05         # detector keeps every box above this; the conf cut is swept on OOF
+DET_NMS_IOU = 0.5
+DET_MAX_DET = 100
+DET_CONFS = (0.2, 0.3, 0.4, 0.5)   # OOF sweep: per-instance existence cut (the FP/FN knob)
+DET_FUSE_IOU = 0.55         # test time: boxes of the fold detectors are fused (WBF) at this IoU
+REF_CROP = 256              # refiner input side in native px; boxes whose context exceeds it
+REF_CONTEXT = 1.4           #   (REF_CONTEXT x long side) are downscaled, probs upscaled back
+REF_PAD = 0.25              # seed channel = detector box grown by this fraction per side
+REF_ENCODER = "resnet34"
+REF_EPOCHS = 12
+REF_BATCH = 16
+REF_LR = 3e-4
+REF_THRS = (0.5, 0.6, 0.7)  # OOF sweep: refiner mask threshold ...
+REF_MIN_AREAS = (100, 200)  # ... x minimum instance area (native px)
+DUP_FRACTION = 0.5          # a refined mask with more than this fraction of its pixels already
+                            # taken by a higher-confidence instance is a duplicate: dropped
+if DEBUG:
+    DET_EPOCHS, DET_BATCH, REF_EPOCHS = 1, 4, 1
+    DET_CONFS, REF_THRS, REF_MIN_AREAS = (0.2, 0.3), (0.5,), (100,)
