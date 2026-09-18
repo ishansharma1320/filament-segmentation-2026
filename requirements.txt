@@ -1,0 +1,14 @@
+torch>=2.3
+torchvision
+segmentation-models-pytorch
+timm
+opencv-python-headless
+pycocotools
+numpy
+pandas
+scipy
+scikit-image
+scikit-learn
+tqdm
+pyyaml
+kaggle>=2.0

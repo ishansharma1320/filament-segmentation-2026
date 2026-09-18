@@ -61,6 +61,10 @@ Read `CLAUDE.md` first: pinned competition facts, data hazards, workflow, guardr
 2. `./setup.sh` — conda env `filament`, data download, reference notebooks, 1024 px cache
 3. `claude` — start Claude Code here
 
+Cloud / remote session instead (no laptop): set the Kaggle credential as an environment
+secret (`KAGGLE_ACCESS_TOKEN`, or `KAGGLE_USERNAME` + `KAGGLE_KEY`), then `./setup_cloud.sh`
+(pip, data, cache, latest kernel outputs). Everything else is identical.
+
 ## Loop (same as ../rsna-knee)
 
 develop in `src/` → `scripts/push.sh` (rebuilds `notebooks/submission.ipynb` from `src/`,

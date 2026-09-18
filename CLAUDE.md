@@ -75,8 +75,18 @@ Local machine (M1 Pro, 17 GB, MPS) is for smoke tests and offline post-processin
    + `fold*_best.pt` + `oof/*.png` + `summary.json` into `runs/<stamp>/`.
 4. `scripts/sweep_postprocess.py runs/<stamp>` -> threshold / min_area / closing on OOF.
 5. `scripts/submit.sh runs/<stamp>/submission.csv "msg"` -> CLI upload (validates first).
-6. **Commit at every kernel push** (message names the kernel version and what changed).
-   Weights, data, cache, runs/ stay gitignored.
+6. **Commit at every kernel push AND `git push origin main`** (message names the kernel
+   version and what changed). Weights, data, cache, runs/ stay gitignored. Remote:
+   `github.com/ishansharma1320/filament-segmentation-2026` (private).
+
+**Remote / cloud sessions (hands-free, no laptop).** The repo is designed to run the whole
+loop from a cloud Claude Code session: `./setup_cloud.sh` (pip deps, Kaggle credential from
+the `KAGGLE_ACCESS_TOKEN` or `KAGGLE_USERNAME`+`KAGGLE_KEY` secrets, data download, cache,
+pull of the latest kernel outputs). No GPU is needed there: training is on Kaggle; the local
+smoke test (`FILAMENT_DEBUG=1 python3 scripts/run_notebook_local.py`) runs on CPU in
+~20-30 min. Start such a session with "continue from PORTING.md" and the current rung.
+The laptop and the cloud must not both drive the kernel at once (a push cancels a running
+version): whoever pushes owns the run until it is pulled and logged.
 
 Kernel modes: no checkpoints attached -> train folds until `TIME_BUDGET` (8.5 h), rewrite
 `submission.csv` after every fold. A dataset of `fold*_best.pt` attached -> inference only.
