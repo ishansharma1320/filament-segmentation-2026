@@ -64,15 +64,15 @@ def find_data_root() -> Path:
 
 # --- image / crops --------------------------------------------------------------------
 H = W = 2048               # native GONG frame; the metric is computed at this size
-IMG_SIZE = 2048            # working resolution. v1-v3: 1024 (thickness ~13 px native -> ~6 px);
-                           # v4: native 2048 (rung 3) - barbs and thin sections survive
+IMG_SIZE = 1024            # working resolution. v1-v3: 1024 (thickness ~13 px native -> ~6 px);
+                           # v4 tried native 2048: FAIL (-0.019 OOF, SQ unchanged) - see PORTING
 CROP = 512                 # training crop taken from the IMG_SIZE image
 POSITIVE_BIAS = 0.7        # fraction of crops centred on a filament pixel
 
 # --- model / training -----------------------------------------------------------------
 ARCH = "unet"              # smp architecture: unet | unetpp | fpn | deeplab | manet
 ENCODER = "resnet34"
-EPOCHS = 28                # v1 (20 epochs): still rising; v2/v3 (32): converged by 25-31
+EPOCHS = 32                # v1 (20 epochs): still rising; v2/v3 (32): converged by 25-31
 BATCH = 8
 LR = 3e-4
 WEIGHT_DECAY = 1e-4

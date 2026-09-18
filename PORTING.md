@@ -67,7 +67,33 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v1 + local post-proc | 2026-09-10 | same maps, thr 0.6 / min_area 300 / close 5 / min_score 0.9 (offline sweep) | **0.4086** | — (not submitted; test maps not saved by v1) |
 | v2 | 2026-09-10 | EPOCHS 20→32; in-kernel sweep thr {0.55,0.65,0.75} x min_area {300,450} x min_score {0.8,0.9}, close 5; saves test/ prob maps | **0.4100** (thr 0.65, min_area 300, min_score 0.9) | **0.36** (public) |
 | v3 | 2026-09-11 | TARGET_MODE medoid (consensus annotator record per file instead of random record); hard no-overlap guard + hole-fill fix in postprocess (neutral on v2 OOF: 0.4100) | 0.4082 (same knobs as v2) | **0.36** (= v2) |
-| v4 | 2026-09-17 | Rung 3: native 2048 resolution (IMG_SIZE 1024→2048, same 512 crops so each crop sees 1/4 the context, batch-1 full-frame inference, float16 test accumulation); EPOCHS 28; TARGET_MODE random | pending | pending |
+| v4 | 2026-09-17 | Rung 3: native 2048 resolution (IMG_SIZE 1024→2048, same 512 crops so each crop sees 1/4 the context, batch-1 full-frame inference, float16 test accumulation); EPOCHS 28; TARGET_MODE random | 0.3910 (thr 0.55, min_area 300, min_score 0.9) | not submitted (FAIL) |
+
+## 2026-09-18 — v4 verdict: native 2048 resolution FAIL (runs/20260918-075110)
+
+7.4 h on a T4 (~80 min/fold: epoch 150-170 s, most of it the 141-image full-frame eval).
+Raw per-fold (thr 0.5 / min_area 150, TTA): 0.341 / 0.332 / 0.364 / 0.356 / 0.362 vs v2
+0.376 / 0.355 / 0.375 / 0.392 / 0.386 — every fold down 0.01-0.04. Best epochs 19-25 of 27
+and the last-5 means sit 0.005-0.01 below best: training got noisier, not longer. OOF sweep
+best **0.3910 vs v2 0.4100 (-0.019)**, with the optimum pushed to the low-threshold edge
+(thr 0.55) and FP up 20% at equal FN.
+
+**The decisive number: SQ 0.675 vs 0.674.** Matched masks are no tighter at 4x the pixels.
+So boundary looseness is not a resolution artefact; it is annotator disagreement on the
+outline (the ±1 px probes already showed the metric's boundary sensitivity is ~0.02/px, and
+the inter-annotator SQ ceiling is 0.63). Resolution cannot buy SQ here.
+
+Confound, stated: 512 crops at native res see 1/4 of the context of the v2 crops, which
+plausibly explains part of the RQ loss (more FPs from local texture that looks filament-like
+without the disk-scale context). A fair retest would use 1024 crops at native res at half
+the batch, but with SQ flat the upside is bounded to recovering RQ, i.e. back to ~v2, at
+2x the cost. **Verdict: FAIL. Rung 3 closed; IMG_SIZE reverts to 1024, EPOCHS to 32.**
+
+Rungs 1, 2, 3, 5 are now closed on this model family; rung 6 (encoder ensembles) is
+bounded by the same SQ ceiling. **Next: rung 4, the detector -> crop-refiner cascade.**
+Rationale from the numbers: at the v2 optimum 40% of predictions are unmatched and 37% of
+GT is missed; a per-object existence decision (detector confidence) and a per-object mask
+(refiner) attack RQ directly, which is the only component with headroom.
 
 ## 2026-09-17 — v3 verdict: medoid targets WASH (runs/20260917-143130)
 
