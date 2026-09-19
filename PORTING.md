@@ -11,9 +11,11 @@ Plain-language record of what was done and why, kept up to date as the work happ
 2. Post-processing for PQ on saved OOF maps (local, free): closing kernel, min_area,
    watershed splitting of merged filaments, hole filling. Log each delta.
 3. Resolution: 2048 native sliding-window inference / 1024 crops of native images.
-4. Detector -> crop-refiner cascade (the public 0.55+ recipe under PQ).
+4. Detector -> crop-refiner cascade (the public 0.55+ recipe under PQ). **DONE v5: 0.444 / LB 0.39.**
 5. Consensus targets (medoid annotator record) vs random-record sampling.
 6. Ensembling across architectures/encoders; TTA is already in.
+7. Detector recall (the v5 bottleneck: box recall 0.62 at the selected conf): bigger YOLO /
+   higher imgsz / more epochs, union-of-records labels, detector flip TTA.
 
 ## 2026-09-08 — repo bootstrap (no kernel pushed yet)
 
@@ -68,7 +70,48 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v2 | 2026-09-10 | EPOCHS 20→32; in-kernel sweep thr {0.55,0.65,0.75} x min_area {300,450} x min_score {0.8,0.9}, close 5; saves test/ prob maps | **0.4100** (thr 0.65, min_area 300, min_score 0.9) | **0.36** (public) |
 | v3 | 2026-09-11 | TARGET_MODE medoid (consensus annotator record per file instead of random record); hard no-overlap guard + hole-fill fix in postprocess (neutral on v2 OOF: 0.4100) | 0.4082 (same knobs as v2) | **0.36** (= v2) |
 | v4 | 2026-09-17 | Rung 3: native 2048 resolution (IMG_SIZE 1024→2048, same 512 crops so each crop sees 1/4 the context, batch-1 full-frame inference, float16 test accumulation); EPOCHS 28; TARGET_MODE random | 0.3910 (thr 0.55, min_area 300, min_score 0.9) | not submitted (FAIL) |
-| v5 | 2026-09-18 | **Rung 4: detector -> crop-refiner cascade** (PIPELINE=cascade). YOLO11s boxes @1024 on the medoid record, 40 epochs/fold; per-box 256 px native crop refiner U-Net/R34 with [img, CLAHE, box seed] input, 12 epochs on every (record, filament); OOF sweep conf x thr x min_area; test boxes fused across folds (WBF) | pending | — |
+| v5 | 2026-09-18 | **Rung 4: detector -> crop-refiner cascade** (PIPELINE=cascade). YOLO11s boxes @1024 on the medoid record, 40 epochs/fold; per-box 256 px native crop refiner U-Net/R34 with [img, CLAHE, box seed] input, 12 epochs on every (record, filament); OOF sweep conf x thr x min_area; test boxes fused across folds (WBF) | **0.4441** (conf 0.3, thr 0.6, min_area 100) | **0.39** (public) |
+
+## 2026-09-19 — v5 verdict: cascade PASS, +0.034 OOF, +0.03 LB (runs/20260919-014124)
+
+**Run.** 3.8 h on a T4: cache 3.5 min; per fold YOLO 14 min (40 epochs), refiner 20.5 min
+(12 x 102 s), OOF+test inference 1.5 min -> 36 min/fold; in-kernel sweep 30 combos 41 min
+(60-110 s each, slower at low conf). Budget headroom: ~4 h.
+
+**OOF PQ 0.4441 (SQ 0.686, RQ 0.648, TP 4921 / FP 2076 / FN 3278) vs v2 0.4100 -> +0.034.
+LB 0.39 vs 0.36 -> +0.03. PASS.** The OOF->LB offset stays ~0.05, so OOF keeps selecting.
+Per-fold at the default knobs (conf 0.3 / thr 0.5 / min_area 100): 0.435 / 0.440 / 0.444 /
+0.452 / 0.445 — every fold above every v2 fold (v2 best fold 0.392 raw, 0.41 post-processed).
+
+**Where the gain came from.** FP fell from 3561 to 2076 (-42 %) at nearly equal TP
+(5135 -> 4921) and FN (3064 -> 3278): the detector's confidence is a far better existence
+signal than the semantic model's mean-prob floor, and one-mask-per-box removed the merges.
+SQ 0.686 vs 0.674: masks a little tighter, still at the annotator ceiling.
+
+**Sweep shape.** conf is the only knob that matters: 0.15 -> 0.428, 0.2 -> 0.438, 0.3 ->
+0.444, 0.4 -> 0.425, 0.5 -> 0.383 (FN explodes: box recall at conf 0.5 is only 0.41).
+thr 0.6 beats 0.5 by 0.001, min_area 100 vs 200 is identical (the refiner never emits
+tiny blobs). Offline finer conf sweep (`scripts/sweep_cascade.py`, thr 0.6): 0.25 -> 0.4441
+(TP 5183 / FP 2598 / FN 3016), 0.30 -> 0.4441, 0.35 -> 0.4384: a flat plateau 0.25-0.30,
+the kernel's pick stands. Nothing more to squeeze from post-processing on this run.
+
+**Diagnostic: the detector is the bottleneck now.** Box-level P/R against all records,
+mean over folds: conf 0.2 -> P 0.59 R 0.71; conf 0.3 -> P 0.68 R 0.62; conf 0.5 -> P 0.81
+R 0.42. Final RQ 0.648 with box recall 0.62 at the selected conf means the refiner converts
+almost every correct box into an IoU > 0.5 match; what is missing is boxes. Refiner val Dice
+0.81 on clean GT boxes, still rising by ~0.001/epoch at epoch 11 (not converged; cheap to
+extend, but SQ says the payoff is small). Every refiner epoch cost 102 s of which most is
+JPEG decoding of 2048^2 frames (6.5k reads/epoch) — a native-crop cache would halve it.
+
+**Next rung candidates, in order of expected value** (detector recall is the lever):
+1. Detector capacity/resolution: YOLO11m, imgsz 1280 or native 2048 tiles, more epochs
+   (40 epochs at 14 min/fold leaves 4 h of budget).
+2. Detector labels: the medoid record has ~7 boxes/file; annotators disagree by a median
+   of 2 filaments per image, so the union of records (deduplicated at IoU > 0.5) as the
+   label set may lift recall on the consensus-ambiguous filaments at a precision cost that
+   the conf sweep can trade back.
+3. Test-time: lower conf on test is NOT free (fused conf is already an average over 5
+   detectors); TTA for the detector (flips) is cheap and raises recall.
 
 ## 2026-09-18 — v5 push: rung 4, detector -> crop-refiner cascade (cloud session)
 
