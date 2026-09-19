@@ -73,6 +73,38 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v4 | 2026-09-17 | Rung 3: native 2048 resolution (IMG_SIZE 1024→2048, same 512 crops so each crop sees 1/4 the context, batch-1 full-frame inference, float16 test accumulation); EPOCHS 28; TARGET_MODE random | 0.3910 (thr 0.55, min_area 300, min_score 0.9) | not submitted (FAIL) |
 | v5 | 2026-09-18 | **Rung 4: detector -> crop-refiner cascade** (PIPELINE=cascade). YOLO11s boxes @1024 on the medoid record, 40 epochs/fold; per-box 256 px native crop refiner U-Net/R34 with [img, CLAHE, box seed] input, 12 epochs on every (record, filament); OOF sweep conf x thr x min_area; test boxes fused across folds (WBF) | **0.4441** (conf 0.3, thr 0.6, min_area 100) | **0.39** (public) |
 | v6 | 2026-09-19 | Detector labels: union of annotator records (dedup at mask IoU 0.5, one filament per record per cluster, kept when >= 1/2 of the file's annotators drew it): 5421 boxes vs medoid 5222 (+1/2 and 2/3-support filaments added, medoid-only 1/3-support ones dropped). YOLO11s @1024 / 40 epochs, refiner and sweep unchanged | 0.4441 (conf 0.3, thr 0.5, min_area 100) — WASH | not submitted (= v5) |
+| v7 | 2026-09-19 | Refiner hard negatives: 25 % of refiner samples are detector OOF FP boxes (conf >= 0.2, box IoU < 0.3 to every annotator) with an all-zero target; pipeline reordered (all 5 detectors, then 5 refiners). Detector = v6 (union labels), sweep unchanged | pending | — |
+
+## 2026-09-19 — offline probes on v6 crops -> v7 decision: refiner hard negatives
+
+Three levers were measured offline before spending GPU hours:
+
+1. **Refiner-confidence rescoring (`scripts/rescore_cascade.py`) — NULL.** Score =
+   conf x meanprob^b, b in {0, 1, 2, 4}, cut swept 0.15-0.40: best 0.4452 (b=0, cut 0.25),
+   0.4447 (b=1), 0.4442 (b=2), 0.4449 (b=4). The refiner's mean prob inside its mask is
+   0.918 / 0.950 / 0.964 (10/50/90 %) with corr 0.13 to the detector conf: it is equally
+   sure on true and false boxes. Trained on positive seeds only, it never learned to reject.
+2. **Two-detector fusion (`scripts/fuse_oof.py`, v5 + v6 fold detectors under the v5 fold
+   refiners, no TTA) — +0.004.** single 0.4417 (cut 0.3) vs fused 0.4460 (cut 0.25). Real
+   (paired, same refiner) but small; a second detector per fold costs +14 min/fold. Parked.
+3. **Test-time calibration — not a lever** (see v6 verdict).
+
+**Where the loss is.** At the v6 optimum: TP 4968, FP 2202, FN 3231, sum IoU 3413. FP is
+31 % of predictions; removing a third of them at constant TP is +0.02, and it would also let
+the cut move down (recall) with the refiner absorbing the extra FPs. Nothing in the pipeline
+looks at a box twice today.
+
+**v7 = refiner hard negatives** (`REF_NEG_FRAC 0.25`, `REF_NEG_CONF 0.2`, `REF_NEG_IOU 0.3`).
+The negatives are the detectors' own OOF false positives — the exact distribution the
+refiner meets at test time — with an all-zero target; the crop pipeline is otherwise
+unchanged (same jitter, same seed channel). To have OOF FPs for every training file, the
+kernel now trains all five detectors first (phase 1, ~70 min), then the five refiners
+(phase 2). Per-epoch diagnostic: fraction of 400 val negatives the refiner rejects
+(< 100 px at thr 0.5), logged next to val Dice (positives only, so comparable to v5/v6).
+Expected cost ~4.7 h. Single variable vs v6. **Gate: OOF PQ > 0.4452 + 0.01 at the
+in-kernel sweep, and the offline rescoring must show the refiner's mask area / mean prob
+now separating TP from FP (a nonzero neg-reject rate).** If it passes, the next knob is the
+conf cut (lower) with area/mean-prob floors, swept offline on the saved crops.
 
 ## 2026-09-19 — v6 verdict: union labels WASH, exactly 0.4441 (runs/20260919-093949)
 
