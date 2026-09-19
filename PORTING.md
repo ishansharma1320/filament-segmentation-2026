@@ -72,7 +72,33 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v3 | 2026-09-11 | TARGET_MODE medoid (consensus annotator record per file instead of random record); hard no-overlap guard + hole-fill fix in postprocess (neutral on v2 OOF: 0.4100) | 0.4082 (same knobs as v2) | **0.36** (= v2) |
 | v4 | 2026-09-17 | Rung 3: native 2048 resolution (IMG_SIZE 1024→2048, same 512 crops so each crop sees 1/4 the context, batch-1 full-frame inference, float16 test accumulation); EPOCHS 28; TARGET_MODE random | 0.3910 (thr 0.55, min_area 300, min_score 0.9) | not submitted (FAIL) |
 | v5 | 2026-09-18 | **Rung 4: detector -> crop-refiner cascade** (PIPELINE=cascade). YOLO11s boxes @1024 on the medoid record, 40 epochs/fold; per-box 256 px native crop refiner U-Net/R34 with [img, CLAHE, box seed] input, 12 epochs on every (record, filament); OOF sweep conf x thr x min_area; test boxes fused across folds (WBF) | **0.4441** (conf 0.3, thr 0.6, min_area 100) | **0.39** (public) |
-| v6 | 2026-09-19 | Detector labels: union of annotator records (dedup at mask IoU 0.5, one filament per record per cluster, kept when >= 1/2 of the file's annotators drew it): 5421 boxes vs medoid 5222 (+1/2 and 2/3-support filaments added, medoid-only 1/3-support ones dropped). YOLO11s @1024 / 40 epochs, refiner and sweep unchanged | pending | — |
+| v6 | 2026-09-19 | Detector labels: union of annotator records (dedup at mask IoU 0.5, one filament per record per cluster, kept when >= 1/2 of the file's annotators drew it): 5421 boxes vs medoid 5222 (+1/2 and 2/3-support filaments added, medoid-only 1/3-support ones dropped). YOLO11s @1024 / 40 epochs, refiner and sweep unchanged | 0.4441 (conf 0.3, thr 0.5, min_area 100) — WASH | not submitted (= v5) |
+
+## 2026-09-19 — v6 verdict: union labels WASH, exactly 0.4441 (runs/20260919-093949)
+
+**Run.** 3.9 h. OOF PQ **0.4441 vs v5 0.4441** (SQ 0.687 / RQ 0.646, TP 4968 / FP 2202 / FN
+3231 vs 4921 / 2076 / 3278): +47 TP bought with +126 FP. Per fold 0.441 / 0.435 / 0.446 /
+0.453 / 0.445 vs 0.435 / 0.440 / 0.444 / 0.452 / 0.445 — three up, one down, all within
+noise. Sweep shape identical (conf 0.3 optimum, thr and min_area flat). Not submitted.
+
+**Mechanism (scripts/miss_analysis.py, v6 vs v5 box recall at conf 0.3).** support 1/2:
+0.399 vs 0.389; 2/3: 0.679 vs 0.661; 2/2: 0.832 vs 0.852; 3/3: 0.905 vs 0.904; 1/3 (removed
+from the labels!): 0.355 vs 0.337; single-annotator: 0.577 vs 0.575. Adding ~470 contested
+filaments to the labels moved their recall by +0.01-0.02, and removing 250 others moved
+theirs up. **Label presence is not what limits recall on contested filaments.** They are
+proposed (recall 0.65-0.87 at conf 0.1) but at low confidence, because features that look
+like them are unlabelled background in most other files: the detector's confidence on them
+is the annotators' disagreement rate, learned faithfully. The v5 miss analysis identified
+where the misses are; v6 shows they are not recoverable by relabelling. The metric's k/n
+arithmetic still holds, but the detector already ranks by k/n on its own.
+
+**Consequence for the plan.** Recall on consensus filaments is 0.83-0.91; on contested ones
+it is capped by label noise; the FP/FN cut is on its plateau. The remaining levers are
+(a) the ranking itself — fewer FP at equal recall — and (b) SQ. Both are testable offline
+before any GPU run: refiner-confidence rescoring (`scripts/rescore_cascade.py`) and
+two-detector fusion on OOF (`scripts/fuse_oof.py`, v5 + v6 detectors under the v5
+refiners). Test-time calibration was checked and is not a lever: fused test confidences
+match the OOF distribution (6.43 vs 6.46 boxes/image at conf 0.3, quantiles within 0.02).
 
 ## 2026-09-19 — v6 push: union-of-records detector labels (single variable)
 
