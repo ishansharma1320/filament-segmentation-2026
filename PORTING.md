@@ -75,6 +75,35 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v6 | 2026-09-19 | Detector labels: union of annotator records (dedup at mask IoU 0.5, one filament per record per cluster, kept when >= 1/2 of the file's annotators drew it): 5421 boxes vs medoid 5222 (+1/2 and 2/3-support filaments added, medoid-only 1/3-support ones dropped). YOLO11s @1024 / 40 epochs, refiner and sweep unchanged | 0.4441 (conf 0.3, thr 0.5, min_area 100) — WASH | not submitted (= v5) |
 | v7 | 2026-09-19 | Refiner hard negatives: 25 % of refiner samples are detector OOF FP boxes (conf >= 0.2, box IoU < 0.3 to every annotator) with an all-zero target; pipeline reordered (all 5 detectors, then 5 refiners). Detector = v6 (union labels), sweep unchanged | 0.4450 (conf 0.3, thr 0.5, min_area 100) — WASH; neg-reject rate 0.000: the refiner never learned to reject | not submitted |
 | v8 | 2026-09-19 | Refiner objectness head (smp aux head, one logit per crop, BCE vs positive/negative) + negatives get pixel-BCE-only seg loss (no Dice on empty targets); objectness saved per crop for offline rescoring (score = conf x obj^b). Same negatives, detector, sweep as v7 | 0.4421 in-kernel / 0.4432 offline (conf 0.25) — WASH/FAIL; obj AUC 0.658 vs conf 0.774, rescoring with obj only loses | not submitted |
+| v9 | 2026-09-19 | Detector at imgsz 1280 from the native 2048 JPEGs (DET_SOURCE native; v5-v8 trained on the 1024 cache); refiner reverted to v6 (no negatives, no objectness head); union labels, YOLO11s, 40 epochs, sweep unchanged | pending | — |
+
+## 2026-09-19 — semantic-fusion probe NULL -> v9 = detector resolution (1280, native frames)
+
+**Probe (`scripts/semantic_fusion_probe.py`, 590 files with v4 semantic OOF maps + v8 crops).**
+(a) Ranking: mean semantic prob inside each refined mask — AUC 0.647 alone, 0.770 combined
+vs 0.774 for the detector conf; PQ sweep 0.4446 (conf only) vs 0.4445 best combined. Null,
+like every other second opinion. (b) Recall: of the 1476 GT filaments with no detector box,
+a semantic instance (v4 knobs thr 0.55 / min_area 300 / min_score 0.9) matches 298 (20 %),
+but the 766 semantic instances that overlap no detector box match an annotator only 100
+times (precision 0.13): adding them = +100 TP, +666 FP -> PQ 0.437 (-0.008). **The
+semantic model sees nothing the detector does not; the misses are the contested class.**
+
+**Ledger of measured levers (all on 5-fold OOF, 1154 records):** medoid vs union labels 0,
+hard negatives 0, objectness head 0, mask-confidence rescoring 0, semantic rescoring 0,
+semantic candidates -0.008, detector TTA / NMS 0.7: same P/R curve, 2-detector fusion
++0.004. Remaining measured gap with an untested cause: **small filaments** — consensus box
+recall 0.79 under 64 px vs 0.89 above (v5 miss analysis), 26 % of GT is under 64 px, and
+the detector has only ever seen them at 1024 px (a 40 px filament is 20 px wide).
+
+**v9: DET_IMGSZ 1280 with DET_SOURCE "native"** — the detector trains on and predicts from
+the 2048 JPEGs (ultralytics resizes to 1280; v5-v8 used the INTER_AREA 1024 cache, so 1280
+needs a new source), boxes come out in native coordinates (scale 1). Refiner reverted to
+v6 exactly (`REF_NEG_FRAC 0`, `REF_OBJ_HEAD False`; the head is now a config knob and both
+checkpoint kinds load), so the comparison is v6 (0.4441 / 0.4452 offline) + one variable.
+Re-measure the size x agreement recall table (`scripts/miss_analysis.py`) to see whether
+the small-consensus cell moves. Cost: YOLO ~22 min/fold at 1.56x the pixels -> ~4.5 h.
+**Gate: OOF PQ > 0.4452 + 0.01, or the < 64 px consensus recall up by >= 0.05 with
+precision held (then the next knob is 1536 / YOLO11m).**
 
 ## 2026-09-19 — v8 verdict: objectness head trains but adds nothing (WASH, 0.4421)
 

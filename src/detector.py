@@ -17,12 +17,19 @@ import torch
 from pycocotools import mask as mask_util
 
 from config import (CACHE, DET_BATCH, DET_CONF_MIN, DET_EPOCHS, DET_FUSE_IOU, DET_IMGSZ, DET_LABEL_MIN_SUPPORT,
-                    DET_LABEL_RECORD, DET_MAX_DET, DET_MODEL, DET_NMS_IOU, H, SEED, W, WORKERS, log)
-from data import test_files, train_files
+                    DET_LABEL_RECORD, DET_MAX_DET, DET_MODEL, DET_NMS_IOU, DET_SOURCE, H, SEED, W, WORKERS, log)
+from data import test_files, test_img_dir, train_files, train_img_dir
 
 
 def yolo_root() -> Path:
-    return CACHE / "yolo"
+    return CACHE / ("yolo" if DET_SOURCE == "cache" else "yolo_native")
+
+
+def image_source(f: str, size: int, split: str = "train") -> Path:
+    """The image the detector trains on / predicts from for file `f`."""
+    if DET_SOURCE == "native":
+        return (train_img_dir() if split == "train" else test_img_dir()) / f
+    return CACHE / (f"img{size}" if split == "train" else f"test{size}") / (f.rsplit(".", 1)[0] + ".png")
 
 
 def box_of_rle(rle) -> tuple[float, float, float, float]:
@@ -67,8 +74,9 @@ def union_boxes(rles_by_record: list[list], min_support: float = DET_LABEL_MIN_S
 
 
 def build_yolo_labels(meta: dict, gt_rles: dict) -> Path:
-    """images/<stem>.png -> the cached S x S PNGs (symlinks); labels/<stem>.txt in normalised
-    YOLO format. Label files are always rewritten (the label recipe is a config knob)."""
+    """images/<stem>.<ext> -> symlinks to the DET_SOURCE images (cached S x S PNGs or the native
+    JPEGs); labels/<stem>.txt in normalised YOLO format. Label files are always rewritten
+    (the label recipe is a config knob)."""
     root, S = yolo_root(), meta["size"]
     (root / "images").mkdir(parents=True, exist_ok=True)
     (root / "labels").mkdir(exist_ok=True)
@@ -76,9 +84,10 @@ def build_yolo_labels(meta: dict, gt_rles: dict) -> Path:
     n_box, n_files, support_hist = 0, 0, {}
     for f in train_files():
         stem = f.rsplit(".", 1)[0]
-        dst = root / "images" / f"{stem}.png"
+        src = image_source(f, S)
+        dst = root / "images" / (stem + src.suffix)
         if not dst.exists():
-            os.symlink((CACHE / f"img{S}" / f"{stem}.png").resolve(), dst)
+            os.symlink(src.resolve(), dst)
         rids = meta["records_by_file"][f]
         if DET_LABEL_RECORD == "union":
             boxes = union_boxes([gt_rles[r] for r in rids])
@@ -106,7 +115,8 @@ def fold_yaml(fold: int, meta: dict, train_limit: int = 0, val_limit: int = 0) -
         tr = tr[:train_limit]
     if val_limit:
         va = va[:val_limit]
-    paths = lambda fs: "\n".join(str(root / "images" / (f.rsplit(".", 1)[0] + ".png")) for f in fs) + "\n"
+    ext = image_source(next(iter(folds)), meta["size"]).suffix
+    paths = lambda fs: "\n".join(str(root / "images" / (f.rsplit(".", 1)[0] + ext)) for f in fs) + "\n"
     (root / f"fold{fold}_train.txt").write_text(paths(tr))
     (root / f"fold{fold}_val.txt").write_text(paths(va))
     y = root / f"fold{fold}.yaml"
@@ -153,9 +163,8 @@ def predict_boxes(weights, files: list[str], size: int, split: str = "train",
     augment=True: ultralytics flip/scale TTA. nms_iou: NMS overlap threshold."""
     from ultralytics import YOLO
     model = model if model is not None else YOLO(str(weights))
-    d = CACHE / (f"img{size}" if split == "train" else f"test{size}")
-    paths = [str(d / (f.rsplit(".", 1)[0] + ".png")) for f in files]
-    scale = H / size
+    paths = [str(image_source(f, size, split)) for f in files]
+    scale = 1.0 if DET_SOURCE == "native" else H / size
     out = {}
     for i in range(0, len(paths), 16):
         res = model.predict(source=paths[i:i + 16], imgsz=DET_IMGSZ, conf=conf, iou=nms_iou,

@@ -22,7 +22,7 @@ import torch
 from pycocotools import mask as mask_util
 from torch.utils.data import Dataset
 
-from config import H, REF_CONTEXT, REF_CROP, REF_ENCODER, REF_NEG_FRAC, REF_PAD, W
+from config import H, REF_CONTEXT, REF_CROP, REF_ENCODER, REF_NEG_FRAC, REF_OBJ_HEAD, REF_PAD, W
 from data import train_img_dir, test_img_dir
 from detector import box_of_rle
 
@@ -153,12 +153,17 @@ class RefinerDataset(Dataset):
                 torch.tensor(0.0 if rle is None else 1.0))
 
 
-def build_refiner(encoder: str = REF_ENCODER, pretrained: bool = True):
-    """U-Net with an auxiliary per-crop "objectness" head (global-pooled encoder features ->
-    one logit): is there a filament under the seed? Trained on positives vs hard negatives,
-    it is the refiner's second opinion on the detector's box (v8). forward -> (mask, obj)."""
+def build_refiner(encoder: str = REF_ENCODER, pretrained: bool = True, obj_head: bool = REF_OBJ_HEAD):
+    """U-Net; with obj_head an auxiliary per-crop "objectness" head (global-pooled encoder
+    features -> one logit, v8: WASH) and forward -> (mask, obj), else forward -> mask."""
     return smp.Unet(encoder_name=encoder, encoder_weights="imagenet" if pretrained else None,
-                    in_channels=3, classes=1, aux_params=dict(classes=1, pooling="avg", dropout=0.0))
+                    in_channels=3, classes=1,
+                    aux_params=dict(classes=1, pooling="avg", dropout=0.0) if obj_head else None)
+
+
+def split_out(out):
+    """(mask logits, obj logits or None) for either refiner variant."""
+    return out if isinstance(out, (tuple, list)) else (out, None)
 
 
 def save_refiner(path, model, **meta):
@@ -167,7 +172,7 @@ def save_refiner(path, model, **meta):
 
 def load_refiner(path, device):
     ck = torch.load(path, map_location=device, weights_only=False)
-    model = build_refiner(ck.get("encoder", REF_ENCODER), pretrained=False).to(device)
+    model = build_refiner(ck.get("encoder", REF_ENCODER), pretrained=False, obj_head=ck.get("obj_head", True)).to(device)
     model.load_state_dict(ck["state_dict"])
     model.eval()
     return model, ck
@@ -201,9 +206,9 @@ def refine_boxes(models: list, img: np.ndarray, boxes: np.ndarray, device, tta: 
             views += [(x.flip(-1), (-1,)), (x.flip(-2), (-2,)), (x.flip(-1, -2), (-1, -2))]
         for m in models:
             for v, dims in views:
-                mk, o = m(v)
+                mk, o = split_out(m(v))
                 acc += torch.sigmoid(mk).flip(dims) if dims else torch.sigmoid(mk)
-                ob += torch.sigmoid(o[:, 0])
+                ob += torch.sigmoid(o[:, 0]) if o is not None else 1.0
         n = len(models) * len(views)
         probs[i:i + batch] = (acc / n)[:, 0].float().cpu().numpy()
         objs[i:i + batch] = (ob / n).float().cpu().numpy()

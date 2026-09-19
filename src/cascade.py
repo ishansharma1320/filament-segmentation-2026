@@ -27,14 +27,14 @@ from torch.utils.data import DataLoader
 
 from config import (DET_CONF_MIN, DET_CONFS, DUP_FRACTION, EVAL_FILES, H, MAX_FOLDS, MAX_STEPS, N_FOLDS,
                     ON_KAGGLE, REF_BATCH, REF_CROP, REF_ENCODER, REF_EPOCHS, REF_LR, REF_MIN_AREAS, REF_NEG_CONF,
-                    REF_NEG_FRAC, REF_NEG_IOU, REF_THRS, START_FOLD, T0, TIME_BUDGET, TTA, W, WEIGHT_DECAY,
+                    REF_NEG_FRAC, REF_NEG_IOU, REF_OBJ_HEAD, REF_THRS, START_FOLD, T0, TIME_BUDGET, TTA, W, WEIGHT_DECAY,
                     WORKERS, DEBUG, log)
 from data import test_files
 from detector import box_iou, box_of_rle, box_pr, build_yolo_labels, fuse_boxes, predict_boxes, train_detector
 from metric import PQAccumulator
 from model import get_device
 from refiner import (RefinerDataset, build_refiner, load_refiner, read_native, refine_boxes, save_refiner,
-                     seed_mask)
+                     seed_mask, split_out)
 from rle import mask_to_rle, masks_to_rles
 
 
@@ -187,8 +187,8 @@ def obj_separation(model, ds, device, n: int = 400) -> dict:
         objs, small = [], 0
         for i in range(0, len(idx), 32):
             x = torch.stack([ds[j][0] for j in idx[i:i + 32]]).to(device)
-            mk, o = model(x)
-            objs.append(torch.sigmoid(o[:, 0]).cpu())
+            mk, o = split_out(model(x))
+            objs.append(torch.sigmoid(o[:, 0]).cpu() if o is not None else torch.ones(x.shape[0]))
             small += int(((torch.sigmoid(mk) >= 0.5).sum(dim=(1, 2, 3)) < 100).sum())
         o = torch.cat(objs)
         out[f"{name}_obj"] = float(o.mean())
@@ -208,6 +208,8 @@ def refiner_loss(logits, obj, y, is_pos):
     den = p.sum(dim=(1, 2, 3)) + y.sum(dim=(1, 2, 3))
     dice = 1 - (2 * inter + 1) / (den + 1)
     dice = (dice * is_pos).sum() / is_pos.sum().clamp(min=1)
+    if obj is None:
+        return bce + dice
     return bce + dice + F.binary_cross_entropy_with_logits(obj[:, 0], is_pos)
 
 
@@ -217,7 +219,7 @@ def val_dice(model, dl, device) -> float:
     num = den = 0.0
     for x, y, _ in dl:
         x, y = x.to(device), y.to(device)
-        p = (torch.sigmoid(model(x)[0]) >= 0.5).float()
+        p = (torch.sigmoid(split_out(model(x))[0]) >= 0.5).float()
         num += float((2 * (p * y).sum(dim=(1, 2, 3))).sum())
         den += float((p.sum(dim=(1, 2, 3)) + y.sum(dim=(1, 2, 3)) + 1e-6).sum())
     return num / max(den, 1e-6)
@@ -258,8 +260,8 @@ def train_refiner(fold: int, meta: dict, gt_rles: dict, device, out_dir: Path, e
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
             is_pos = is_pos.to(device, non_blocking=True)
             with torch.autocast("cuda", enabled=use_amp):
-                logits, obj = model(x)
-                loss = refiner_loss(logits.float(), obj.float(), y, is_pos)
+                logits, obj = split_out(model(x))
+                loss = refiner_loss(logits.float(), obj.float() if obj is not None else None, y, is_pos)
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.step(opt)
@@ -276,7 +278,8 @@ def train_refiner(fold: int, meta: dict, gt_rles: dict, device, out_dir: Path, e
             f"{time.time() - t0:.0f}s")
         if d > best:
             best = d
-            save_refiner(ckpt, model, encoder=REF_ENCODER, crop=REF_CROP, fold=fold, epoch=epoch, dice=best)
+            save_refiner(ckpt, model, encoder=REF_ENCODER, crop=REF_CROP, fold=fold, epoch=epoch, dice=best,
+                         obj_head=REF_OBJ_HEAD)
         json.dump(history, open(out_dir / f"fold{fold}_refiner_history.json", "w"), indent=1)
     return ckpt
 

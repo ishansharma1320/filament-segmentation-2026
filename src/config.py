@@ -114,7 +114,9 @@ if DEBUG:
 # "cascade" = YOLO box detector -> per-box crop refiner -> one mask per detection.
 PIPELINE = "cascade"
 DET_MODEL = "yolo11s.pt"    # ultralytics COCO-pretrained weights (downloaded; internet ON)
-DET_IMGSZ = 1024            # trains on the cached 1024 px PNGs, so no resize happens at all
+DET_IMGSZ = 1280            # v5-v8: 1024 on the cached PNGs (no resize). v9: 1280 from the native
+                            # 2048 JPEGs (small filaments: consensus recall 0.79 < 64 px vs 0.89)
+DET_SOURCE = "native"       # "cache": img{IMG_SIZE}.png (v5-v8) | "native": the 2048 JPEGs
 DET_EPOCHS = 40
 DET_BATCH = 8
 DET_LABEL_RECORD = "union"  # YOLO labels are static files. "medoid": the consensus record (v5).
@@ -137,12 +139,14 @@ REF_BATCH = 16
 REF_LR = 3e-4
 REF_THRS = (0.5, 0.6, 0.7)  # OOF sweep: refiner mask threshold ...
 REF_MIN_AREAS = (100, 200)  # ... x minimum instance area (native px)
-REF_NEG_FRAC = 0.25         # v7: fraction of refiner training samples that are hard negatives -
+REF_NEG_FRAC = 0.0          # v7/v8: 0.25 (hard negatives, WASH both times); 0 = the v6 refiner.
+                            # fraction of refiner training samples that are hard negatives -
                             # detector OOF boxes with IoU < REF_NEG_IOU to every GT box of every
                             # record of the file, target all-zero - so the refiner learns to reject
                             # detector FPs (v5/v6 refiner: positives only, 0.95 mean prob on FPs)
 REF_NEG_IOU = 0.3
 REF_NEG_CONF = 0.2          # only FP boxes above this conf are used (the ones that reach the cut)
+REF_OBJ_HEAD = False        # v8: True (objectness head; AUC 0.658 vs detector conf 0.774: WASH)
 DUP_FRACTION = 0.5          # a refined mask with more than this fraction of its pixels already
                             # taken by a higher-confidence instance is a duplicate: dropped
 if DEBUG:
