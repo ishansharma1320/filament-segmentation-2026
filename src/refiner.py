@@ -22,7 +22,7 @@ import torch
 from pycocotools import mask as mask_util
 from torch.utils.data import Dataset
 
-from config import H, REF_CONTEXT, REF_CROP, REF_ENCODER, REF_PAD, W
+from config import H, REF_CONTEXT, REF_CROP, REF_ENCODER, REF_NEG_FRAC, REF_PAD, W
 from data import train_img_dir, test_img_dir
 from detector import box_of_rle
 
@@ -88,9 +88,13 @@ def read_native(file: str, split: str = "train") -> np.ndarray:
 
 
 class RefinerDataset(Dataset):
-    """One sample per (annotator record, filament) of the given files."""
+    """One sample per (annotator record, filament) of the given files, plus - when
+    `negatives` is given ({file: (n, 4) xyxy boxes of detector false positives}) - hard
+    negative samples: a detector FP box as the seed and an all-zero target, drawn so that
+    negatives are `neg_frac` of the samples (sampled with replacement if there are fewer)."""
 
-    def __init__(self, files: list[str], meta: dict, gt_rles: dict, augment: bool, crop: int = REF_CROP):
+    def __init__(self, files: list[str], meta: dict, gt_rles: dict, augment: bool, crop: int = REF_CROP,
+                 negatives: dict | None = None, neg_frac: float = REF_NEG_FRAC):
         self.items = []
         for f in files:
             for rid in meta["records_by_file"][f]:
@@ -98,6 +102,16 @@ class RefinerDataset(Dataset):
                     b = box_of_rle(rle)
                     if b[2] >= 1 and b[3] >= 1:
                         self.items.append((f, rle, b))
+        self.n_pos = len(self.items)
+        if negatives:
+            pool = [(f, None, (float(x0), float(y0), float(x1 - x0), float(y1 - y0)))
+                    for f in files for x0, y0, x1, y1 in negatives.get(f, [])]
+            if pool and neg_frac > 0:
+                n_neg = int(round(self.n_pos * neg_frac / (1 - neg_frac)))
+                rng = random.Random(0)
+                self.items += [pool[i] for i in (rng.choices(range(len(pool)), k=n_neg) if n_neg > len(pool)
+                                                 else rng.sample(range(len(pool)), n_neg))]
+        self.n_neg = len(self.items) - self.n_pos
         self.augment, self.crop = augment, crop
 
     def __len__(self):
@@ -107,7 +121,7 @@ class RefinerDataset(Dataset):
         f, rle, box = self.items[i]
         rng = random.Random(random.getrandbits(32)) if self.augment else random.Random(i)
         img = read_native(f)
-        gt = mask_util.decode(rle)
+        gt = mask_util.decode(rle) if rle is not None else np.zeros((H, W), np.uint8)
         seed_box, pad = (jitter_box(box, rng) if self.augment else (list(box), REF_PAD))
         x0, y0, side = crop_bounds(seed_box, self.crop)
         im = img[y0:y0 + side, x0:x0 + side]

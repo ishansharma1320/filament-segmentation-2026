@@ -137,6 +137,12 @@ REF_BATCH = 16
 REF_LR = 3e-4
 REF_THRS = (0.5, 0.6, 0.7)  # OOF sweep: refiner mask threshold ...
 REF_MIN_AREAS = (100, 200)  # ... x minimum instance area (native px)
+REF_NEG_FRAC = 0.25         # v7: fraction of refiner training samples that are hard negatives -
+                            # detector OOF boxes with IoU < REF_NEG_IOU to every GT box of every
+                            # record of the file, target all-zero - so the refiner learns to reject
+                            # detector FPs (v5/v6 refiner: positives only, 0.95 mean prob on FPs)
+REF_NEG_IOU = 0.3
+REF_NEG_CONF = 0.2          # only FP boxes above this conf are used (the ones that reach the cut)
 DUP_FRACTION = 0.5          # a refined mask with more than this fraction of its pixels already
                             # taken by a higher-confidence instance is a duplicate: dropped
 if DEBUG:

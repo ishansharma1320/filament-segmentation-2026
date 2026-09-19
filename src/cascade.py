@@ -25,10 +25,11 @@ import torch
 from torch.utils.data import DataLoader
 
 from config import (DET_CONF_MIN, DET_CONFS, DUP_FRACTION, EVAL_FILES, H, MAX_FOLDS, MAX_STEPS, N_FOLDS,
-                    ON_KAGGLE, REF_BATCH, REF_CROP, REF_ENCODER, REF_EPOCHS, REF_LR, REF_MIN_AREAS, REF_THRS,
-                    START_FOLD, T0, TIME_BUDGET, TTA, W, WEIGHT_DECAY, WORKERS, DEBUG, log)
+                    ON_KAGGLE, REF_BATCH, REF_CROP, REF_ENCODER, REF_EPOCHS, REF_LR, REF_MIN_AREAS, REF_NEG_CONF,
+                    REF_NEG_FRAC, REF_NEG_IOU, REF_THRS, START_FOLD, T0, TIME_BUDGET, TTA, W, WEIGHT_DECAY,
+                    WORKERS, DEBUG, log)
 from data import test_files
-from detector import box_pr, build_yolo_labels, fuse_boxes, predict_boxes, train_detector
+from detector import box_iou, box_of_rle, box_pr, build_yolo_labels, fuse_boxes, predict_boxes, train_detector
 from metric import PQAccumulator
 from model import bce_dice_loss, get_device
 from refiner import (RefinerDataset, build_refiner, load_refiner, read_native, refine_boxes, save_refiner,
@@ -144,6 +145,42 @@ def write_cascade_submission(test_crops: dict, conf: float, thr: float, min_area
     return df
 
 
+# --- hard negatives ---------------------------------------------------------------------------
+def hard_negatives(oof_boxes: dict, meta: dict, gt_rles: dict, conf: float = REF_NEG_CONF,
+                   iou: float = REF_NEG_IOU) -> dict:
+    """{file: (n, 4) xyxy} detector OOF boxes above `conf` that overlap no GT box of any
+    annotator record of the file by more than `iou`: false positives by every annotator."""
+    out = {}
+    for f, b in oof_boxes.items():
+        b = b[b[:, 4] >= conf]
+        if not len(b):
+            continue
+        g = np.array([box_of_rle(r) for rid in meta["records_by_file"][f] for r in gt_rles[rid]],
+                     np.float32).reshape(-1, 4)
+        g[:, 2:] += g[:, :2]
+        m = box_iou(b[:, :4], g)
+        keep = (m.max(1) < iou) if len(g) else np.ones(len(b), bool)
+        if keep.any():
+            out[f] = b[keep, :4]
+    return out
+
+
+@torch.no_grad()
+def neg_rejection(model, ds, device, min_area: int = 100) -> float:
+    """Fraction of the dataset's negative samples for which the refiner emits < min_area px at
+    thr 0.5 (diagnostic; the dataset must have been built with negatives)."""
+    if ds.n_neg == 0:
+        return float("nan")
+    idx = list(range(ds.n_pos, len(ds.items)))[:400]
+    model.eval()
+    rej = 0
+    for i in range(0, len(idx), 32):
+        x = torch.stack([ds[j][0] for j in idx[i:i + 32]]).to(device)
+        p = (torch.sigmoid(model(x)) >= 0.5).sum(dim=(1, 2, 3))
+        rej += int((p < min_area).sum())
+    return rej / len(idx)
+
+
 # --- refiner training -------------------------------------------------------------------------
 @torch.no_grad()
 def val_dice(model, dl, device) -> float:
@@ -158,7 +195,7 @@ def val_dice(model, dl, device) -> float:
 
 
 def train_refiner(fold: int, meta: dict, gt_rles: dict, device, out_dir: Path, epochs: int = REF_EPOCHS,
-                  max_steps: int = MAX_STEPS, eval_files: int = EVAL_FILES) -> Path:
+                  max_steps: int = MAX_STEPS, eval_files: int = EVAL_FILES, negatives: dict | None = None) -> Path:
     folds = meta["folds"]
     tr = sorted(f for f, k in folds.items() if k != fold)
     va = sorted(f for f, k in folds.items() if k == fold)
@@ -166,17 +203,20 @@ def train_refiner(fold: int, meta: dict, gt_rles: dict, device, out_dir: Path, e
         va = va[:eval_files]
         if DEBUG:
             tr = tr[:max(eval_files * 2, 4)]
-    ds_tr = RefinerDataset(tr, meta, gt_rles, augment=True)
+    ds_tr = RefinerDataset(tr, meta, gt_rles, augment=True, negatives=negatives)
     ds_va = RefinerDataset(va, meta, gt_rles, augment=False)
-    log(f"fold {fold}: refiner {REF_ENCODER} crops {len(ds_tr)} train / {len(ds_va)} val, {epochs} epochs")
+    ds_va_neg = RefinerDataset(va, meta, gt_rles, augment=False, negatives=negatives, neg_frac=0.5) if negatives else None
+    log(f"fold {fold}: refiner {REF_ENCODER} crops {ds_tr.n_pos} pos + {ds_tr.n_neg} neg train / "
+        f"{len(ds_va)} val (+{ds_va_neg.n_neg if ds_va_neg else 0} val neg), {epochs} epochs")
     dl = DataLoader(ds_tr, batch_size=REF_BATCH, shuffle=True, num_workers=WORKERS, drop_last=True,
                     persistent_workers=WORKERS > 0)
     dl_va = DataLoader(ds_va, batch_size=REF_BATCH, shuffle=False, num_workers=min(WORKERS, 2))
     model = build_refiner(REF_ENCODER, pretrained=not DEBUG).to(device)
     steps = min(len(dl), max_steps) if max_steps else len(dl)
     opt = torch.optim.AdamW(model.parameters(), lr=REF_LR, weight_decay=WEIGHT_DECAY)
+    # OneCycleLR divides by (warm-up steps - 1): with a 10-step debug epoch pct_start 0.1 is 0/0
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=REF_LR, epochs=epochs, steps_per_epoch=steps,
-                                                pct_start=0.1)
+                                                pct_start=0.1 if epochs * steps >= 30 else 0.3)
     use_amp = device.type == "cuda"
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     ckpt, best, history = out_dir / f"fold{fold}_refiner.pt", -1.0, []
@@ -196,9 +236,11 @@ def train_refiner(fold: int, meta: dict, gt_rles: dict, device, out_dir: Path, e
             sched.step()
             tot += loss.item(); n += 1
         d = val_dice(model, dl_va, device)
-        history.append({"epoch": epoch, "loss": tot / max(n, 1), "val_dice": d, "time": time.time() - t0})
+        rej = neg_rejection(model, ds_va_neg, device) if ds_va_neg else float("nan")
+        history.append({"epoch": epoch, "loss": tot / max(n, 1), "val_dice": d, "neg_reject": rej,
+                        "time": time.time() - t0})
         log(f"fold {fold} refiner epoch {epoch:2d} loss {tot / max(n, 1):.4f} | val dice {d:.4f} | "
-            f"{time.time() - t0:.0f}s")
+            f"neg reject {rej:.3f} | {time.time() - t0:.0f}s")
         if d > best:
             best = d
             save_refiner(ckpt, model, encoder=REF_ENCODER, crop=REF_CROP, fold=fold, epoch=epoch, dice=best)
@@ -256,31 +298,52 @@ def main_cascade(meta: dict, gt_rles: dict, out_dir: Path):
         return
 
     max_folds = N_FOLDS if MAX_FOLDS == "auto" else int(MAX_FOLDS)
-    results, test_boxes, ref_ckpts, fold_time = [], [], [], 0.0
-    oof = {}
+    train_limit = max(EVAL_FILES * 2, 4) if (DEBUG and EVAL_FILES) else 0
+    val_files = {}
+    for fold in range(N_FOLDS):
+        va = sorted(f for f, k in meta["folds"].items() if k == fold)
+        val_files[fold] = va[:EVAL_FILES] if EVAL_FILES else va
+
+    # phase 1: detectors. Every fold's detector first, because the refiners (phase 2) train on
+    # the detectors' OOF false positives as hard negatives (REF_NEG_FRAC > 0).
+    det_folds, test_boxes, oof_boxes_all, box_prs, det_time = [], [], {}, {}, 0.0
     for fold in range(START_FOLD, N_FOLDS):
-        if len(results) >= max_folds:
+        if len(det_folds) >= max_folds:
             break
+        elapsed = time.time() - T0
+        if det_folds and elapsed + 1.15 * det_time > TIME_BUDGET / 2:
+            log(f"time budget (detectors): {elapsed / 60:.0f} min used -> stop after {len(det_folds)} folds")
+            break
+        t0 = time.time()
+        det = train_detector(fold, meta, out_dir, train_limit=train_limit, val_limit=EVAL_FILES)
+        ob = predict_boxes(det, val_files[fold], meta["size"])
+        pr = {c: box_pr(ob, meta, gt_rles, c) for c in (0.2, 0.3, 0.5)}
+        for c, r in pr.items():
+            log(f"fold {fold} boxes conf>={c}: P {r['precision']:.3f} R {r['recall']:.3f} "
+                f"(tp {r['tp']} fp {r['fp']} fn {r['fn']})")
+        test_boxes.append(predict_boxes(det, tfiles, meta["size"], split="test"))
+        json.dump({f: b.tolist() for f, b in ob.items()}, open(out_dir / f"fold{fold}_oof_boxes.json", "w"))
+        oof_boxes_all.update(ob)
+        box_prs[fold] = pr
+        det_folds.append(fold)
+        det_time = time.time() - t0
+    negatives = hard_negatives(oof_boxes_all, meta, gt_rles) if REF_NEG_FRAC > 0 else None
+    if negatives:
+        log(f"hard negatives: {sum(len(v) for v in negatives.values())} detector FP boxes over "
+            f"{len(negatives)} files (conf >= {REF_NEG_CONF}, IoU < {REF_NEG_IOU} to every annotator)")
+
+    # phase 2: refiners, OOF crops, scoreable submission after every fold
+    results, ref_ckpts, fold_time = [], [], 0.0
+    oof = {}
+    for fold in det_folds:
         elapsed = time.time() - T0
         if results and elapsed + 1.15 * fold_time > TIME_BUDGET:
             log(f"time budget: {elapsed / 60:.0f} min used, fold takes {fold_time / 60:.0f} min -> stop")
             break
         t0 = time.time()
-        va = sorted(f for f, k in meta["folds"].items() if k == fold)
-        train_limit = max(EVAL_FILES * 2, 4) if (DEBUG and EVAL_FILES) else 0
-        if EVAL_FILES:
-            va = va[:EVAL_FILES]
-        # stage 1: detector
-        det = train_detector(fold, meta, out_dir, train_limit=train_limit, val_limit=EVAL_FILES)
-        oof_boxes = predict_boxes(det, va, meta["size"])
-        pr = {c: box_pr(oof_boxes, meta, gt_rles, c) for c in (0.2, 0.3, 0.5)}
-        for c, r in pr.items():
-            log(f"fold {fold} boxes conf>={c}: P {r['precision']:.3f} R {r['recall']:.3f} "
-                f"(tp {r['tp']} fp {r['fp']} fn {r['fn']})")
-        test_boxes.append(predict_boxes(det, tfiles, meta["size"], split="test"))
-        json.dump({f: b.tolist() for f, b in oof_boxes.items()}, open(out_dir / f"fold{fold}_oof_boxes.json", "w"))
-        # stage 2: refiner
-        ck = train_refiner(fold, meta, gt_rles, device, out_dir)
+        va = val_files[fold]
+        oof_boxes = {f: oof_boxes_all[f] for f in va}
+        ck = train_refiner(fold, meta, gt_rles, device, out_dir, negatives=negatives)
         ref_ckpts.append(ck)
         refiner, _ = load_refiner(ck, device)
         crops = refine_files([refiner], oof_boxes, va, "train", device, TTA)
@@ -289,11 +352,11 @@ def main_cascade(meta: dict, gt_rles: dict, out_dir: Path):
         s = score_crops(crops, meta, gt_rles, 0.3, 0.5, 100)
         log(f"fold {fold} OOF cascade PQ {s['pq']:.4f} SQ {s['sq']:.3f} RQ {s['rq']:.3f} "
             f"tp {s['tp']} fp {s['fp']} fn {s['fn']} (conf 0.3 / thr 0.5 / min_area 100)")
-        results.append({"fold": fold, "box_pr": pr, "oof_pq": s["pq"], "refiner": str(ck)})
+        results.append({"fold": fold, "box_pr": box_prs[fold], "oof_pq": s["pq"], "refiner": str(ck)})
         del refiner
         torch.cuda.empty_cache() if device.type == "cuda" else None
         fold_time = time.time() - t0
-        # keep the run scoreable: fused boxes + refiner ensemble of the folds so far, default knobs
+        # keep the run scoreable: fused boxes of ALL trained detectors + refiners so far, default knobs
         refiners = [load_refiner(c, device)[0] for c in ref_ckpts]
         tcrops = refine_files(refiners, fused_test_boxes(test_boxes), tfiles, "test", device, tta=False)
         write_cascade_submission(tcrops, 0.3, 0.5, 100, out_dir)
