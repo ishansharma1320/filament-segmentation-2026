@@ -74,7 +74,39 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v5 | 2026-09-18 | **Rung 4: detector -> crop-refiner cascade** (PIPELINE=cascade). YOLO11s boxes @1024 on the medoid record, 40 epochs/fold; per-box 256 px native crop refiner U-Net/R34 with [img, CLAHE, box seed] input, 12 epochs on every (record, filament); OOF sweep conf x thr x min_area; test boxes fused across folds (WBF) | **0.4441** (conf 0.3, thr 0.6, min_area 100) | **0.39** (public) |
 | v6 | 2026-09-19 | Detector labels: union of annotator records (dedup at mask IoU 0.5, one filament per record per cluster, kept when >= 1/2 of the file's annotators drew it): 5421 boxes vs medoid 5222 (+1/2 and 2/3-support filaments added, medoid-only 1/3-support ones dropped). YOLO11s @1024 / 40 epochs, refiner and sweep unchanged | 0.4441 (conf 0.3, thr 0.5, min_area 100) — WASH | not submitted (= v5) |
 | v7 | 2026-09-19 | Refiner hard negatives: 25 % of refiner samples are detector OOF FP boxes (conf >= 0.2, box IoU < 0.3 to every annotator) with an all-zero target; pipeline reordered (all 5 detectors, then 5 refiners). Detector = v6 (union labels), sweep unchanged | 0.4450 (conf 0.3, thr 0.5, min_area 100) — WASH; neg-reject rate 0.000: the refiner never learned to reject | not submitted |
-| v8 | 2026-09-19 | Refiner objectness head (smp aux head, one logit per crop, BCE vs positive/negative) + negatives get pixel-BCE-only seg loss (no Dice on empty targets); objectness saved per crop for offline rescoring (score = conf x obj^b). Same negatives, detector, sweep as v7 | pending | — |
+| v8 | 2026-09-19 | Refiner objectness head (smp aux head, one logit per crop, BCE vs positive/negative) + negatives get pixel-BCE-only seg loss (no Dice on empty targets); objectness saved per crop for offline rescoring (score = conf x obj^b). Same negatives, detector, sweep as v7 | 0.4421 in-kernel / 0.4432 offline (conf 0.25) — WASH/FAIL; obj AUC 0.658 vs conf 0.774, rescoring with obj only loses | not submitted |
+
+## 2026-09-19 — v8 verdict: objectness head trains but adds nothing (WASH, 0.4421)
+
+**Run.** 4.9 h. In-kernel 0.4421 (conf 0.3 / thr 0.6), offline 0.4432 at conf 0.25 vs v7's
+0.4461: -0.003, noise (val Dice 0.804-0.813 vs 0.809-0.817, the head costs the mask a
+little). Per fold 0.439 / 0.435 / 0.442 / 0.447 / 0.446. Not submitted.
+
+**The head did learn this time**: val negatives rejected (obj < 0.5) 0.19-0.26 per fold
+(v7: 0.000), obj mean on val positives 0.74-0.78 vs negatives 0.64-0.67. But as a ranking
+signal over all 8835 OOF crops (label = box matches some annotator's filament at IoU > 0.5,
+55 % positive): **AUC detector conf 0.774, objectness 0.658, conf x obj 0.773, conf x obj^2
+0.759**; corr(conf, obj) 0.44. Rescoring sweep (score = conf x obj^b): b=0 0.4432, b=0.5
+0.4427, b=1 0.4419, b=2 0.4358, b=4 0.4143. The refiner's second opinion is a noisier copy
+of the detector's first one. **Verdict: the rejection lever is exhausted — three different
+second-opinion signals (mask confidence, hard-negative mask, objectness head) all fail to
+beat the detector's own confidence, because the "false positives" are mostly filaments
+some annotator would have drawn (the v5 miss analysis: 88 % of never-proposed GT and, by
+symmetry, most FPs sit in the contested class).**
+
+**Detector inference knobs probed offline on the v8 fold weights (`scripts/detector_probe.py`,
+box P/R pooled over folds):** base conf 0.3 P 0.663 R 0.623; flip/scale TTA conf 0.3 P 0.623
+R 0.672, conf 0.4 P 0.702 R 0.585 — the same P/R curve shifted along conf (at P = 0.663
+TTA gives R ~0.63); NMS 0.7 strictly worse (P 0.633 at R 0.627). Neither moves the curve.
+Not worth a run.
+
+**Ledger after v5-v8.** Cascade 0.444-0.446 OOF / 0.39 LB across four variants; every
+lever inside the cascade (labels, hard negatives, objectness, TTA, NMS, rescoring,
+2-detector fusion +0.004) is flat. What has NOT been measured: a second, independent view
+of the image — the semantic U-Net (full-disk context at 1024, different errors) — as a
+ranking feature or as a candidate source (`scripts/semantic_fusion_probe.py`, running on
+the 590 files whose v4 OOF maps are on disk), and detector capacity / resolution for the
+small-filament gap (consensus recall 0.79 under 64 px vs 0.89 above).
 
 ## 2026-09-19 — v7 verdict: hard negatives WASH (0.4450), because the loss could not learn them
 
