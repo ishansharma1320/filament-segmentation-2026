@@ -73,7 +73,42 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v4 | 2026-09-17 | Rung 3: native 2048 resolution (IMG_SIZE 1024→2048, same 512 crops so each crop sees 1/4 the context, batch-1 full-frame inference, float16 test accumulation); EPOCHS 28; TARGET_MODE random | 0.3910 (thr 0.55, min_area 300, min_score 0.9) | not submitted (FAIL) |
 | v5 | 2026-09-18 | **Rung 4: detector -> crop-refiner cascade** (PIPELINE=cascade). YOLO11s boxes @1024 on the medoid record, 40 epochs/fold; per-box 256 px native crop refiner U-Net/R34 with [img, CLAHE, box seed] input, 12 epochs on every (record, filament); OOF sweep conf x thr x min_area; test boxes fused across folds (WBF) | **0.4441** (conf 0.3, thr 0.6, min_area 100) | **0.39** (public) |
 | v6 | 2026-09-19 | Detector labels: union of annotator records (dedup at mask IoU 0.5, one filament per record per cluster, kept when >= 1/2 of the file's annotators drew it): 5421 boxes vs medoid 5222 (+1/2 and 2/3-support filaments added, medoid-only 1/3-support ones dropped). YOLO11s @1024 / 40 epochs, refiner and sweep unchanged | 0.4441 (conf 0.3, thr 0.5, min_area 100) — WASH | not submitted (= v5) |
-| v7 | 2026-09-19 | Refiner hard negatives: 25 % of refiner samples are detector OOF FP boxes (conf >= 0.2, box IoU < 0.3 to every annotator) with an all-zero target; pipeline reordered (all 5 detectors, then 5 refiners). Detector = v6 (union labels), sweep unchanged | pending | — |
+| v7 | 2026-09-19 | Refiner hard negatives: 25 % of refiner samples are detector OOF FP boxes (conf >= 0.2, box IoU < 0.3 to every annotator) with an all-zero target; pipeline reordered (all 5 detectors, then 5 refiners). Detector = v6 (union labels), sweep unchanged | 0.4450 (conf 0.3, thr 0.5, min_area 100) — WASH; neg-reject rate 0.000: the refiner never learned to reject | not submitted |
+| v8 | 2026-09-19 | Refiner objectness head (smp aux head, one logit per crop, BCE vs positive/negative) + negatives get pixel-BCE-only seg loss (no Dice on empty targets); objectness saved per crop for offline rescoring (score = conf x obj^b). Same negatives, detector, sweep as v7 | pending | — |
+
+## 2026-09-19 — v7 verdict: hard negatives WASH (0.4450), because the loss could not learn them
+
+**Run.** 5.0 h (detectors 77 min, refiners 5 x 31 min with the negatives + diagnostic, sweep
+55 min). OOF PQ **0.4450 vs v6 0.4441** (+0.001, noise); offline conf 0.25: 0.4461 vs
+0.4452 — the same +0.001. Per fold 0.442 / 0.437 / 0.447 / 0.451 / 0.448. Not submitted.
+1437 hard negatives over 523 files (conf >= 0.2, IoU < 0.3 to every annotator).
+
+**Mechanism: neg-reject 0.000 at every epoch of every fold.** The refiner emitted >= 100 px on
+every one of the 400 val negatives, in every fold, at every epoch, and training loss sat at
+0.45 vs 0.24 in v6 — exactly the negatives' Dice term (~1 each, 25 % of samples) never
+coming down. The soft Dice on an all-zero target is 1 - 1/(area+1): its gradient is
+1/(area+1)^2, i.e. ~1e-6 for a 1000 px mask, and the pixel-mean BCE spreads the remaining
+signal over 65k pixels. The negatives carried no usable gradient; the v7 refiner is the v6
+refiner plus noise. Rescoring probe on v7 crops: null again (0.4461 -> 0.4451 / 0.4453).
+**Not a data verdict: the experiment was not run.**
+
+## 2026-09-19 — v8 push: objectness head, the rejection channel v7 lacked
+
+Same negatives, same detector, same sweep. Two changes that are one mechanism:
+- `build_refiner` adds smp's auxiliary classification head (global-average-pooled encoder
+  features -> 1 logit): "is there a filament under this seed?", trained with BCE on the
+  positive / negative label — a per-sample gradient that cannot be starved.
+- `refiner_loss`: positives keep BCE + Dice; negatives get pixel BCE only (Dice on an empty
+  target is undefined).
+The head's sigmoid is stored per crop (`obj`, 9th meta column) for OOF and test, so the
+instance score conf x obj^b can be swept offline (`scripts/rescore_cascade.py --feature obj`)
+and applied to the test crops without a kernel run (`scripts/build_submission.py`). The
+in-kernel sweep stays on detector conf alone, so the kernel's own number is comparable to
+v7. Per-epoch diagnostic: mean obj on val positives / negatives, negatives rejected
+(obj < 0.5), negatives with a < 100 px mask. Debug smoke test: obj pos 0.885 / neg 0.009
+after one epoch on 16 files — the head trains where the mask head could not.
+**Gate: offline conf x obj^b sweep > 0.4461 + 0.01; kernel-only number is expected ~flat.**
+Cost ~5 h.
 
 ## 2026-09-19 — offline probes on v6 crops -> v7 decision: refiner hard negatives
 

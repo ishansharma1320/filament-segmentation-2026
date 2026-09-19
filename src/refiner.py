@@ -149,12 +149,16 @@ class RefinerDataset(Dataset):
                 x, y = x[:, ::-1], y[:, ::-1]
             k = rng.randrange(4)
             x, y = np.rot90(x, k, axes=(1, 2)), np.rot90(y, k, axes=(1, 2))
-        return torch.from_numpy(np.ascontiguousarray(x)), torch.from_numpy(np.ascontiguousarray(y))
+        return (torch.from_numpy(np.ascontiguousarray(x)), torch.from_numpy(np.ascontiguousarray(y)),
+                torch.tensor(0.0 if rle is None else 1.0))
 
 
 def build_refiner(encoder: str = REF_ENCODER, pretrained: bool = True):
+    """U-Net with an auxiliary per-crop "objectness" head (global-pooled encoder features ->
+    one logit): is there a filament under the seed? Trained on positives vs hard negatives,
+    it is the refiner's second opinion on the detector's box (v8). forward -> (mask, obj)."""
     return smp.Unet(encoder_name=encoder, encoder_weights="imagenet" if pretrained else None,
-                    in_channels=3, classes=1)
+                    in_channels=3, classes=1, aux_params=dict(classes=1, pooling="avg", dropout=0.0))
 
 
 def save_refiner(path, model, **meta):
@@ -173,8 +177,8 @@ def load_refiner(path, device):
 def refine_boxes(models: list, img: np.ndarray, boxes: np.ndarray, device, tta: bool = True,
                  crop: int = REF_CROP, batch: int = 32) -> list[dict]:
     """boxes (n, 5) xyxy+conf native -> one crop record per box:
-    {"prob": uint8 (crop, crop), "x0", "y0", "side", "conf", "box": xyxy}. Probs are the mean
-    over models (and 4 flips if tta). Nothing is thresholded here: the crop records are what
+    {"prob": uint8 (crop, crop), "x0", "y0", "side", "conf", "box": xyxy, "obj": objectness in
+    [0, 1]}. Probs and obj are the mean over models (and 4 flips if tta). Nothing is thresholded here: the crop records are what
     the OOF sweep and the offline sweeps consume."""
     recs, xs = [], []
     for b in boxes:
@@ -187,17 +191,23 @@ def refine_boxes(models: list, img: np.ndarray, boxes: np.ndarray, device, tta: 
     if not recs:
         return recs
     probs = np.zeros((len(recs), crop, crop), np.float32)
+    objs = np.zeros(len(recs), np.float32)
     for i in range(0, len(xs), batch):
         x = torch.from_numpy(np.stack(xs[i:i + batch])).to(device)
         acc = torch.zeros((x.shape[0], 1, crop, crop), device=device)
+        ob = torch.zeros(x.shape[0], device=device)
+        views = [(x, None)]
+        if tta:
+            views += [(x.flip(-1), (-1,)), (x.flip(-2), (-2,)), (x.flip(-1, -2), (-1, -2))]
         for m in models:
-            acc += torch.sigmoid(m(x))
-            if tta:
-                acc += torch.sigmoid(m(x.flip(-1))).flip(-1)
-                acc += torch.sigmoid(m(x.flip(-2))).flip(-2)
-                acc += torch.sigmoid(m(x.flip(-1, -2))).flip(-1, -2)
-        acc /= len(models) * (4 if tta else 1)
-        probs[i:i + batch] = acc[:, 0].float().cpu().numpy()
-    for r, p in zip(recs, probs):
+            for v, dims in views:
+                mk, o = m(v)
+                acc += torch.sigmoid(mk).flip(dims) if dims else torch.sigmoid(mk)
+                ob += torch.sigmoid(o[:, 0])
+        n = len(models) * len(views)
+        probs[i:i + batch] = (acc / n)[:, 0].float().cpu().numpy()
+        objs[i:i + batch] = (ob / n).float().cpu().numpy()
+    for r, p, o in zip(recs, probs, objs):
         r["prob"] = np.round(p * 255).astype(np.uint8)
+        r["obj"] = float(o)
     return recs

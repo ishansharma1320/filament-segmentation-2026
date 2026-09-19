@@ -1,10 +1,10 @@
 """Offline: does the refiner's own mask confidence improve the instance ranking?
 
 For every OOF crop record the instance mask (thr) is built once and its features recorded:
-detector conf, mean refiner prob inside the mask, max prob, area. Then PQ is swept over cuts
-of a combined score  s = conf^1 * meanprob^b  (b = 0: detector conf only, the v5/v6 recipe).
+detector conf, mean refiner prob inside the mask, max prob, area, objectness (v8+). Then PQ is
+swept over cuts of a combined score  s = conf * feature^b  (b = 0: detector conf only).
 
-    python3 scripts/rescore_cascade.py runs/<stamp> --b 0 1 2 4 --cuts 0.15 0.2 0.25 0.3 0.35 0.4
+    python3 scripts/rescore_cascade.py runs/<stamp> --feature obj --b 0 1 2 4 --cuts 0.15 0.2 0.25 0.3
 """
 import argparse
 import sys
@@ -42,21 +42,24 @@ def features(crops):
             if len(keep):
                 m = np.isin(labels, keep)
                 mp, area = float(p[m].mean()), int(m.sum())
-        out.append((c["conf"], mp, float(p.max()), area))
-    return np.array(out, np.float32).reshape(-1, 4)
+        out.append((c["conf"], mp, float(p.max()), area, c.get("obj", 1.0)))
+    return np.array(out, np.float32).reshape(-1, 5)
 
 
 _G = {}
 
 
-def _init(oof, feats, meta, gt):
-    _G.update(oof=oof, feats=feats, meta=meta, gt=gt)
+def _init(oof, feats, meta, gt, feature):
+    _G.update(oof=oof, feats=feats, meta=meta, gt=gt, feature=feature)
+
+
+FEAT = {"meanprob": 1, "maxprob": 2, "obj": 4}
 
 
 def _score_file(args):
     f, b, cut = args
     crops, ft = _G["oof"][f], _G["feats"][f]
-    s = ft[:, 0] * np.power(np.maximum(ft[:, 1], 1e-3), b)
+    s = ft[:, 0] * np.power(np.maximum(ft[:, FEAT[_G["feature"]]], 1e-3), b)
     scored = [dict(c, conf=float(v)) for c, v in zip(crops, s)]
     preds = masks_to_rles(cascade.crop_instances(scored, cut, THR, 100))
     acc = PQAccumulator()
@@ -71,15 +74,17 @@ def main():
     ap.add_argument("--b", type=float, nargs="+", default=[0, 1, 2, 4])
     ap.add_argument("--cuts", type=float, nargs="+", default=[0.15, 0.2, 0.25, 0.3, 0.35, 0.4])
     ap.add_argument("--procs", type=int, default=3)
+    ap.add_argument("--feature", default="meanprob", choices=list(FEAT))
     a = ap.parse_args()
     meta, gt = load_meta(), load_gt_rles()
     oof = cascade.load_crops(Path(a.run, "oof_crops"))
     feats = {f: features(v) for f, v in oof.items()}
     allf = np.concatenate(list(feats.values()))
-    print(f"{len(oof)} files, {len(allf)} crops; meanprob quantiles 10/50/90: "
-          f"{np.percentile(allf[:, 1], [10, 50, 90]).round(3)}; corr(conf, meanprob) {np.corrcoef(allf[:, 0], allf[:, 1])[0, 1]:.3f}")
+    k = FEAT[a.feature]
+    print(f"{len(oof)} files, {len(allf)} crops; {a.feature} quantiles 10/50/90: "
+          f"{np.percentile(allf[:, k], [10, 50, 90]).round(3)}; corr(conf, {a.feature}) {np.corrcoef(allf[:, 0], allf[:, k])[0, 1]:.3f}")
     files = sorted(oof)
-    with Pool(a.procs, initializer=_init, initargs=(oof, feats, meta, gt)) as pool:
+    with Pool(a.procs, initializer=_init, initargs=(oof, feats, meta, gt, a.feature)) as pool:
         for b in a.b:
             for cut in a.cuts:
                 if b == 0 and cut < 0.2:

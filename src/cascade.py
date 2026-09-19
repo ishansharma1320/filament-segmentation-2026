@@ -22,6 +22,7 @@ import cv2
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from config import (DET_CONF_MIN, DET_CONFS, DUP_FRACTION, EVAL_FILES, H, MAX_FOLDS, MAX_STEPS, N_FOLDS,
@@ -31,7 +32,7 @@ from config import (DET_CONF_MIN, DET_CONFS, DUP_FRACTION, EVAL_FILES, H, MAX_FO
 from data import test_files
 from detector import box_iou, box_of_rle, box_pr, build_yolo_labels, fuse_boxes, predict_boxes, train_detector
 from metric import PQAccumulator
-from model import bce_dice_loss, get_device
+from model import get_device
 from refiner import (RefinerDataset, build_refiner, load_refiner, read_native, refine_boxes, save_refiner,
                      seed_mask)
 from rle import mask_to_rle, masks_to_rles
@@ -88,6 +89,13 @@ def crop_instances_never_empty(crops: list[dict], conf_thr: float, thr: float, m
     return inst
 
 
+def rescored(crops: list[dict], b: float) -> list[dict]:
+    """Instance score = detector conf x objectness^b (b = 0: detector conf alone)."""
+    if b == 0:
+        return crops
+    return [dict(c, conf=c["conf"] * max(c.get("obj", 1.0), 1e-3) ** b) for c in crops]
+
+
 def score_crops(crops_by_file: dict, meta: dict, gt_rles: dict, conf_thr: float, thr: float,
                 min_area: int) -> dict:
     acc = PQAccumulator()
@@ -112,14 +120,14 @@ def sweep_cascade(oof: dict, meta: dict, gt_rles: dict) -> tuple[float, float, i
 
 
 def save_crops(crops_by_file: dict, d: Path):
-    """One compressed npz per file: probs (n, crop, crop) uint8 + meta (n, 8) float32
-    [x0, y0, side, conf, bx0, by0, bx1, by1]."""
+    """One compressed npz per file: probs (n, crop, crop) uint8 + meta (n, 9) float32
+    [x0, y0, side, conf, bx0, by0, bx1, by1, obj]."""
     d.mkdir(exist_ok=True, parents=True)
     for f, crops in crops_by_file.items():
         stem = f.rsplit(".", 1)[0]
         probs = np.stack([c["prob"] for c in crops]) if crops else np.zeros((0, REF_CROP, REF_CROP), np.uint8)
-        meta = np.array([[c["x0"], c["y0"], c["side"], c["conf"], *c["box"]] for c in crops],
-                        np.float32).reshape(-1, 8)
+        meta = np.array([[c["x0"], c["y0"], c["side"], c["conf"], *c["box"], c.get("obj", 1.0)] for c in crops],
+                        np.float32).reshape(-1, 9)
         np.savez_compressed(d / f"{stem}.npz", probs=probs, meta=meta)
 
 
@@ -128,7 +136,8 @@ def load_crops(d: Path) -> dict:
     for p in sorted(Path(d).glob("*.npz")):
         z = np.load(p)
         out[p.stem + ".jpeg"] = [{"prob": pr, "x0": m[0], "y0": m[1], "side": m[2], "conf": float(m[3]),
-                                  "box": list(m[4:8])} for pr, m in zip(z["probs"], z["meta"])]
+                                  "box": list(m[4:8]), "obj": float(m[8]) if len(m) > 8 else 1.0}
+                                 for pr, m in zip(z["probs"], z["meta"])]
     return out
 
 
@@ -166,29 +175,49 @@ def hard_negatives(oof_boxes: dict, meta: dict, gt_rles: dict, conf: float = REF
 
 
 @torch.no_grad()
-def neg_rejection(model, ds, device, min_area: int = 100) -> float:
-    """Fraction of the dataset's negative samples for which the refiner emits < min_area px at
-    thr 0.5 (diagnostic; the dataset must have been built with negatives)."""
-    if ds.n_neg == 0:
-        return float("nan")
-    idx = list(range(ds.n_pos, len(ds.items)))[:400]
+def obj_separation(model, ds, device, n: int = 400) -> dict:
+    """Objectness head on val crops: mean sigmoid on positives / negatives, fraction of
+    negatives rejected (obj < 0.5) and of negatives with a < 100 px mask at thr 0.5."""
     model.eval()
-    rej = 0
-    for i in range(0, len(idx), 32):
-        x = torch.stack([ds[j][0] for j in idx[i:i + 32]]).to(device)
-        p = (torch.sigmoid(model(x)) >= 0.5).sum(dim=(1, 2, 3))
-        rej += int((p < min_area).sum())
-    return rej / len(idx)
+    out = {}
+    for name, idx in (("pos", list(range(0, min(ds.n_pos, n)))),
+                      ("neg", list(range(ds.n_pos, min(len(ds.items), ds.n_pos + n))))):
+        if not idx:
+            continue
+        objs, small = [], 0
+        for i in range(0, len(idx), 32):
+            x = torch.stack([ds[j][0] for j in idx[i:i + 32]]).to(device)
+            mk, o = model(x)
+            objs.append(torch.sigmoid(o[:, 0]).cpu())
+            small += int(((torch.sigmoid(mk) >= 0.5).sum(dim=(1, 2, 3)) < 100).sum())
+        o = torch.cat(objs)
+        out[f"{name}_obj"] = float(o.mean())
+        out[f"{name}_reject"] = float((o < 0.5).float().mean())
+        out[f"{name}_small"] = small / len(idx)
+    return out
 
 
 # --- refiner training -------------------------------------------------------------------------
+def refiner_loss(logits, obj, y, is_pos):
+    """Positives: pixel BCE + soft Dice; negatives (all-zero target): pixel BCE only — Dice on
+    an empty target has a ~1/area^2 gradient and taught nothing in v7. Plus BCE on the
+    objectness logit vs the positive/negative label."""
+    bce = F.binary_cross_entropy_with_logits(logits, y)
+    p = torch.sigmoid(logits)
+    inter = (p * y).sum(dim=(1, 2, 3))
+    den = p.sum(dim=(1, 2, 3)) + y.sum(dim=(1, 2, 3))
+    dice = 1 - (2 * inter + 1) / (den + 1)
+    dice = (dice * is_pos).sum() / is_pos.sum().clamp(min=1)
+    return bce + dice + F.binary_cross_entropy_with_logits(obj[:, 0], is_pos)
+
+
 @torch.no_grad()
 def val_dice(model, dl, device) -> float:
     model.eval()
     num = den = 0.0
-    for x, y in dl:
+    for x, y, _ in dl:
         x, y = x.to(device), y.to(device)
-        p = (torch.sigmoid(model(x)) >= 0.5).float()
+        p = (torch.sigmoid(model(x)[0]) >= 0.5).float()
         num += float((2 * (p * y).sum(dim=(1, 2, 3))).sum())
         den += float((p.sum(dim=(1, 2, 3)) + y.sum(dim=(1, 2, 3)) + 1e-6).sum())
     return num / max(den, 1e-6)
@@ -223,12 +252,14 @@ def train_refiner(fold: int, meta: dict, gt_rles: dict, device, out_dir: Path, e
     for epoch in range(epochs):
         model.train()
         t0, tot, n = time.time(), 0.0, 0
-        for step, (x, y) in enumerate(dl):
+        for step, (x, y, is_pos) in enumerate(dl):
             if step >= steps:
                 break
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+            is_pos = is_pos.to(device, non_blocking=True)
             with torch.autocast("cuda", enabled=use_amp):
-                loss = bce_dice_loss(model(x), y)
+                logits, obj = model(x)
+                loss = refiner_loss(logits.float(), obj.float(), y, is_pos)
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.step(opt)
@@ -236,11 +267,13 @@ def train_refiner(fold: int, meta: dict, gt_rles: dict, device, out_dir: Path, e
             sched.step()
             tot += loss.item(); n += 1
         d = val_dice(model, dl_va, device)
-        rej = neg_rejection(model, ds_va_neg, device) if ds_va_neg else float("nan")
-        history.append({"epoch": epoch, "loss": tot / max(n, 1), "val_dice": d, "neg_reject": rej,
+        sep = obj_separation(model, ds_va_neg, device) if ds_va_neg else {}
+        history.append({"epoch": epoch, "loss": tot / max(n, 1), "val_dice": d, **sep,
                         "time": time.time() - t0})
         log(f"fold {fold} refiner epoch {epoch:2d} loss {tot / max(n, 1):.4f} | val dice {d:.4f} | "
-            f"neg reject {rej:.3f} | {time.time() - t0:.0f}s")
+            f"obj pos {sep.get('pos_obj', float('nan')):.3f} neg {sep.get('neg_obj', float('nan')):.3f} | "
+            f"neg reject {sep.get('neg_reject', float('nan')):.3f} small {sep.get('neg_small', float('nan')):.3f} | "
+            f"{time.time() - t0:.0f}s")
         if d > best:
             best = d
             save_refiner(ckpt, model, encoder=REF_ENCODER, crop=REF_CROP, fold=fold, epoch=epoch, dice=best)
