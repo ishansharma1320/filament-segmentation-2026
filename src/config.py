@@ -117,7 +117,12 @@ DET_MODEL = "yolo11s.pt"    # ultralytics COCO-pretrained weights (downloaded; i
 DET_IMGSZ = 1024            # trains on the cached 1024 px PNGs, so no resize happens at all
 DET_EPOCHS = 40
 DET_BATCH = 8
-DET_LABEL_RECORD = "medoid" # YOLO labels are static files: one record per file, the consensus one
+DET_LABEL_RECORD = "union"  # YOLO labels are static files. "medoid": the consensus record (v5).
+                            # "union": every record's filaments, deduplicated across annotators at
+                            # mask IoU > 0.5, kept when drawn by >= DET_LABEL_MIN_SUPPORT of the
+                            # file's annotators (v6; the pooled metric rewards predicting a filament
+                            # iff support > PQ / (2 SQ) ~ 0.32, see PORTING 2026-09-19)
+DET_LABEL_MIN_SUPPORT = 0.5
 DET_CONF_MIN = 0.1          # detector keeps every box above this; the conf cut is swept on OOF
 DET_NMS_IOU = 0.5
 DET_MAX_DET = 100

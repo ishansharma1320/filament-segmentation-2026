@@ -72,6 +72,28 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v3 | 2026-09-11 | TARGET_MODE medoid (consensus annotator record per file instead of random record); hard no-overlap guard + hole-fill fix in postprocess (neutral on v2 OOF: 0.4100) | 0.4082 (same knobs as v2) | **0.36** (= v2) |
 | v4 | 2026-09-17 | Rung 3: native 2048 resolution (IMG_SIZE 1024→2048, same 512 crops so each crop sees 1/4 the context, batch-1 full-frame inference, float16 test accumulation); EPOCHS 28; TARGET_MODE random | 0.3910 (thr 0.55, min_area 300, min_score 0.9) | not submitted (FAIL) |
 | v5 | 2026-09-18 | **Rung 4: detector -> crop-refiner cascade** (PIPELINE=cascade). YOLO11s boxes @1024 on the medoid record, 40 epochs/fold; per-box 256 px native crop refiner U-Net/R34 with [img, CLAHE, box seed] input, 12 epochs on every (record, filament); OOF sweep conf x thr x min_area; test boxes fused across folds (WBF) | **0.4441** (conf 0.3, thr 0.6, min_area 100) | **0.39** (public) |
+| v6 | 2026-09-19 | Detector labels: union of annotator records (dedup at mask IoU 0.5, one filament per record per cluster, kept when >= 1/2 of the file's annotators drew it): 5421 boxes vs medoid 5222 (+1/2 and 2/3-support filaments added, medoid-only 1/3-support ones dropped). YOLO11s @1024 / 40 epochs, refiner and sweep unchanged | pending | — |
+
+## 2026-09-19 — v6 push: union-of-records detector labels (single variable)
+
+`DET_LABEL_RECORD = "union"`, `DET_LABEL_MIN_SUPPORT = 0.5` (`detector.union_boxes`). Every
+record's filaments are clustered across annotators at mask IoU > 0.5 with at most one
+filament per record per cluster (an annotator who split a filament keeps two boxes; chain
+merges cannot swallow them). Clusters drawn by >= half of the file's annotators are kept,
+represented by the box of the member with the highest total IoU to the others.
+
+Label count: 5421 boxes (7.67/file) vs 5222 medoid; 3206 from single-record files
+(unchanged), 1428 from 2-annotator files, 787 from 3-annotator files. The full union at
+support >= 1/3 would be 6448 — the extra ~1000 sit at the metric's break-even (k/n = 0.33
+vs 0.32), so they are left out; if v6 raises recall on 1/2 and 2/3 filaments as intended,
+"support >= 1/3" is a one-knob follow-up. Note the change is not purely additive: 88 files
+lose a net 202 boxes that only the medoid annotator drew (1/3 support); the metric says
+those are worth ~0.
+
+Everything else is v5 byte-for-byte (YOLO11s @1024, 40 epochs, refiner, sweep grid, WBF).
+Smoke test: debug notebook end-to-end, exit 0. **Gate: OOF PQ > 0.4441 + 0.01; the
+per-support recall table of the miss analysis is re-measured to see the mechanism.**
+Expected cost ~3.8 h.
 
 ## 2026-09-19 — v5 miss analysis: the detector misses what its labels never showed it
 

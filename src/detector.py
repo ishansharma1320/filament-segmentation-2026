@@ -16,8 +16,8 @@ import numpy as np
 import torch
 from pycocotools import mask as mask_util
 
-from config import (CACHE, DET_BATCH, DET_CONF_MIN, DET_EPOCHS, DET_FUSE_IOU, DET_IMGSZ, DET_LABEL_RECORD,
-                    DET_MAX_DET, DET_MODEL, DET_NMS_IOU, H, SEED, W, WORKERS, log)
+from config import (CACHE, DET_BATCH, DET_CONF_MIN, DET_EPOCHS, DET_FUSE_IOU, DET_IMGSZ, DET_LABEL_MIN_SUPPORT,
+                    DET_LABEL_RECORD, DET_MAX_DET, DET_MODEL, DET_NMS_IOU, H, SEED, W, WORKERS, log)
 from data import test_files, train_files
 
 
@@ -31,25 +31,70 @@ def box_of_rle(rle) -> tuple[float, float, float, float]:
     return float(x), float(y), float(w), float(h)
 
 
+def union_boxes(rles_by_record: list[list], min_support: float = DET_LABEL_MIN_SUPPORT,
+                iou_thr: float = 0.5) -> list[tuple[float, float, float, float]]:
+    """Filaments of all annotator records of one file, deduplicated across records.
+    Greedy clustering: a filament joins the first cluster that holds no mask of its own record
+    yet and holds a mask of another record with IoU > iou_thr (one filament per record per
+    cluster, so an annotator who split a filament in two keeps two boxes). A cluster's support
+    is the number of records in it; clusters with support / n_records >= min_support are kept,
+    each represented by the box of its member with the highest total IoU to the other members
+    (the consensus outline)."""
+    n = len(rles_by_record)
+    clusters: list[list[tuple[int, object]]] = []   # [(record index, rle), ...]
+    for r, rles in enumerate(rles_by_record):
+        for rle in rles:
+            placed = False
+            for cl in clusters:
+                if any(k == r for k, _ in cl):
+                    continue
+                others = [m for _, m in cl]
+                if (np.asarray(mask_util.iou(others, [rle], [0] * 1)) > iou_thr).any():
+                    cl.append((r, rle)); placed = True
+                    break
+            if not placed:
+                clusters.append([(r, rle)])
+    out = []
+    for cl in clusters:
+        if len({k for k, _ in cl}) / n < min_support:
+            continue
+        if len(cl) == 1:
+            out.append(box_of_rle(cl[0][1])); continue
+        ms = [m for _, m in cl]
+        tot = np.asarray(mask_util.iou(ms, ms, [0] * len(ms))).sum(1)
+        out.append(box_of_rle(ms[int(tot.argmax())]))
+    return out
+
+
 def build_yolo_labels(meta: dict, gt_rles: dict) -> Path:
     """images/<stem>.png -> the cached S x S PNGs (symlinks); labels/<stem>.txt in normalised
-    YOLO format from the DET_LABEL_RECORD record. Idempotent."""
+    YOLO format. Label files are always rewritten (the label recipe is a config knob)."""
     root, S = yolo_root(), meta["size"]
     (root / "images").mkdir(parents=True, exist_ok=True)
     (root / "labels").mkdir(exist_ok=True)
+    (root / "labels.cache").unlink(missing_ok=True)   # ultralytics' scan cache of the old labels
+    n_box, n_files, support_hist = 0, 0, {}
     for f in train_files():
         stem = f.rsplit(".", 1)[0]
         dst = root / "images" / f"{stem}.png"
         if not dst.exists():
             os.symlink((CACHE / f"img{S}" / f"{stem}.png").resolve(), dst)
-        rid = meta["medoid"][f] if DET_LABEL_RECORD == "medoid" else meta["records_by_file"][f][0]
+        rids = meta["records_by_file"][f]
+        if DET_LABEL_RECORD == "union":
+            boxes = union_boxes([gt_rles[r] for r in rids])
+        else:
+            rid = meta["medoid"][f] if DET_LABEL_RECORD == "medoid" else rids[0]
+            boxes = [box_of_rle(rle) for rle in gt_rles[rid]]
         lines = []
-        for rle in gt_rles[rid]:
-            x, y, w, h = box_of_rle(rle)
+        for x, y, w, h in boxes:
             if w < 1 or h < 1:
                 continue
             lines.append(f"0 {(x + w / 2) / W:.6f} {(y + h / 2) / H:.6f} {w / W:.6f} {h / H:.6f}")
         (root / "labels" / f"{stem}.txt").write_text("\n".join(lines) + ("\n" if lines else ""))
+        n_box += len(lines); n_files += 1
+        support_hist[len(rids)] = support_hist.get(len(rids), 0) + len(lines)
+    log(f"YOLO labels ({DET_LABEL_RECORD}): {n_box} boxes over {n_files} files "
+        f"({n_box / max(n_files, 1):.2f}/file); boxes by n_annotators {support_hist}")
     return root
 
 
