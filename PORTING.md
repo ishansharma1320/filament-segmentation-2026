@@ -14,8 +14,9 @@ Plain-language record of what was done and why, kept up to date as the work happ
 4. Detector -> crop-refiner cascade (the public 0.55+ recipe under PQ). **DONE v5: 0.444 / LB 0.39.**
 5. Consensus targets (medoid annotator record) vs random-record sampling.
 6. Ensembling across architectures/encoders; TTA is already in.
-7. Detector recall (the v5 bottleneck: box recall 0.62 at the selected conf): bigger YOLO /
-   higher imgsz / more epochs, union-of-records labels, detector flip TTA.
+7. Detector recall (the v5 bottleneck: box recall 0.62 at the selected conf). Order set by the
+   miss analysis of 2026-09-19: (a) union-of-records labels, (b) bigger YOLO / imgsz 1280 /
+   more epochs, (c) detector flip TTA.
 
 ## 2026-09-08 — repo bootstrap (no kernel pushed yet)
 
@@ -71,6 +72,44 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v3 | 2026-09-11 | TARGET_MODE medoid (consensus annotator record per file instead of random record); hard no-overlap guard + hole-fill fix in postprocess (neutral on v2 OOF: 0.4100) | 0.4082 (same knobs as v2) | **0.36** (= v2) |
 | v4 | 2026-09-17 | Rung 3: native 2048 resolution (IMG_SIZE 1024→2048, same 512 crops so each crop sees 1/4 the context, batch-1 full-frame inference, float16 test accumulation); EPOCHS 28; TARGET_MODE random | 0.3910 (thr 0.55, min_area 300, min_score 0.9) | not submitted (FAIL) |
 | v5 | 2026-09-18 | **Rung 4: detector -> crop-refiner cascade** (PIPELINE=cascade). YOLO11s boxes @1024 on the medoid record, 40 epochs/fold; per-box 256 px native crop refiner U-Net/R34 with [img, CLAHE, box seed] input, 12 epochs on every (record, filament); OOF sweep conf x thr x min_area; test boxes fused across folds (WBF) | **0.4441** (conf 0.3, thr 0.6, min_area 100) | **0.39** (public) |
+
+## 2026-09-19 — v5 miss analysis: the detector misses what its labels never showed it
+
+Offline, from `fold*_oof_boxes.json` (every GT filament of every record vs the fold
+detector's boxes, hit = a box with IoU > 0.5; "support" k/n = how many of the file's n
+annotators drew a mask with IoU > 0.5 to it):
+
+| GT filaments (multi-annotator files) | n | box recall @conf 0.3 | @0.1 | present in medoid labels |
+|---|---|---|---|---|
+| support 2/2 | 1118 | 0.852 | 0.943 | 100 % |
+| support 3/3 | 1152 | 0.904 | 0.957 | 100 % |
+| support 2/3 | 868 | 0.661 | 0.866 | 82 % |
+| support 1/2 | 869 | 0.389 | 0.625 | 55 % |
+| support 1/3 | 986 | 0.337 | 0.625 | 25 % |
+
+Single-annotator files (3206 filaments, no support info): 0.575. Size is secondary: within
+consensus filaments recall is 0.78 (< 64 px) / 0.90 (64-150) / 0.90 (> 150); within contested
+ones 0.35 / 0.50 / 0.51. Agreement explains a 0.4-0.5 gap, size ~0.1. Of the 1661 filaments
+never proposed at any conf, 88 % are contested.
+
+**Reading.** The detector is saturated on filaments every annotator agrees on (0.85-0.90 at
+the selected conf, 0.95 at conf 0.1). Its recall on the rest tracks how often the medoid
+labels contained them — it learned exactly what it was shown. The medoid record was the
+right call for a semantic model (v3: wash) but for the detector it deletes 45 % of the
+support-1/2 and 18 % of the support-2/3 filaments from the labels.
+
+**What the pooled metric wants.** A filament drawn by k of n annotators, predicted with
+IoU s, adds k*s to the numerator and k TP + 0.5(n-k) FP to the denominator; leaving it out
+adds 0.5k FN. At the current operating point (PQ 0.44, SQ 0.68) predicting it wins iff
+k/n > PQ/(2 SQ) = 0.32. So support 1/2 (869) and 2/3 (868) filaments are worth predicting
+and the labels should contain them; 1/3 is marginal (0.33). Union-of-records labels
+deduplicated at mask IoU > 0.5 are close to metric-optimal for the detector.
+
+**Decision: v6 = detector labels from the union of records (support >= 1/2 of the file's
+annotators, dedup at IoU 0.5), everything else frozen** (YOLO11s @1024, 40 epochs, same
+refiner, same sweep). Same cost as v5 (~3.8 h), single variable. The bigger-model /
+imgsz-1280 experiment is demoted to after this: it addresses the ~0.1 size effect, not the
+0.4 agreement effect. Gate: OOF PQ > 0.4441 + 0.01.
 
 ## 2026-09-19 — v5 verdict: cascade PASS, +0.034 OOF, +0.03 LB (runs/20260919-014124)
 
