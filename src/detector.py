@@ -147,17 +147,19 @@ def train_detector(fold: int, meta: dict, out_dir: Path, epochs: int = DET_EPOCH
 
 @torch.no_grad()
 def predict_boxes(weights, files: list[str], size: int, split: str = "train",
-                  conf: float = DET_CONF_MIN) -> dict[str, np.ndarray]:
-    """{file: float32 (n, 5) [x0, y0, x1, y1, conf] in native px, conf-descending}."""
+                  conf: float = DET_CONF_MIN, augment: bool = False, nms_iou: float = DET_NMS_IOU,
+                  model=None) -> dict[str, np.ndarray]:
+    """{file: float32 (n, 5) [x0, y0, x1, y1, conf] in native px, conf-descending}.
+    augment=True: ultralytics flip/scale TTA. nms_iou: NMS overlap threshold."""
     from ultralytics import YOLO
-    model = YOLO(str(weights))
+    model = model if model is not None else YOLO(str(weights))
     d = CACHE / (f"img{size}" if split == "train" else f"test{size}")
     paths = [str(d / (f.rsplit(".", 1)[0] + ".png")) for f in files]
     scale = H / size
     out = {}
     for i in range(0, len(paths), 16):
-        res = model.predict(source=paths[i:i + 16], imgsz=DET_IMGSZ, conf=conf, iou=DET_NMS_IOU,
-                            max_det=DET_MAX_DET, verbose=False, device=_device_arg())
+        res = model.predict(source=paths[i:i + 16], imgsz=DET_IMGSZ, conf=conf, iou=nms_iou,
+                            max_det=DET_MAX_DET, verbose=False, device=_device_arg(), augment=augment)
         for f, r in zip(files[i:i + 16], res):
             if r.boxes is None or len(r.boxes) == 0:
                 out[f] = np.zeros((0, 5), np.float32)
