@@ -105,6 +105,12 @@ then nothing until 0.42. Pulled the public kernels behind it:
 - `nishantkharga/...-honest-sota-v9`: UNet++/EfficientNet-B4 @1024, consensus masks, TTA,
   disk masking, components — the same family as our v2 (0.41 OOF / 0.36 LB).
 
+**Evaluator probe (2026-09-20, submission 56400454).** The fused entry rebuilt at cut 0.10
+(1665 rows, 9.25/image vs 6.9 at cut 0.25): `src/metric.py` on OOF predicts 0.4451 - 0.4485 =
+**-0.03; LB 0.40 -> 0.37, exactly -0.03.** The leaderboard charges false positives as the
+organiser's PQ does; the OOF->LB offset stays ~0.05. Any "emit more candidates" strategy is
+dead on arrival, and the classical 0.46 cannot be an evaluator artefact of FP leniency.
+
 ## 2026-09-20 — 5-run detector fusion on OOF: +0.005, the one lever that cleared its bar
 
 `scripts/fuse_runs_oof.py`: for each fold, the v5-v9 fold-k detectors' OOF boxes (all
