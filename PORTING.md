@@ -16,7 +16,10 @@ Plain-language record of what was done and why, kept up to date as the work happ
 6. Ensembling across architectures/encoders; TTA is already in.
 7. Detector recall (the v5 bottleneck: box recall 0.62 at the selected conf). Order set by the
    miss analysis of 2026-09-19: (a) union-of-records labels, (b) bigger YOLO / imgsz 1280 /
-   more epochs, (c) detector flip TTA.
+   more epochs, (c) detector flip TTA. **CLOSED 2026-09-20: (a) v6 wash, (b) v9 wash,
+   (c) same P/R curve; hard negatives v7 / objectness v8 wash. Ledger in the v9 verdict.**
+8. Test-time fusion of every pulled fold detector (WBF) under the latest refiners: +0.005 OOF,
+   LB 0.39 -> 0.40, free (CPU, `scripts/fuse_runs_test.py`). Any future run adds 5 detectors.
 
 ## 2026-09-08 — repo bootstrap (no kernel pushed yet)
 
@@ -76,6 +79,7 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v7 | 2026-09-19 | Refiner hard negatives: 25 % of refiner samples are detector OOF FP boxes (conf >= 0.2, box IoU < 0.3 to every annotator) with an all-zero target; pipeline reordered (all 5 detectors, then 5 refiners). Detector = v6 (union labels), sweep unchanged | 0.4450 (conf 0.3, thr 0.5, min_area 100) — WASH; neg-reject rate 0.000: the refiner never learned to reject | not submitted |
 | v8 | 2026-09-19 | Refiner objectness head (smp aux head, one logit per crop, BCE vs positive/negative) + negatives get pixel-BCE-only seg loss (no Dice on empty targets); objectness saved per crop for offline rescoring (score = conf x obj^b). Same negatives, detector, sweep as v7 | 0.4421 in-kernel / 0.4432 offline (conf 0.25) — WASH/FAIL; obj AUC 0.658 vs conf 0.774, rescoring with obj only loses | not submitted |
 | v9 | 2026-09-19 | Detector at imgsz 1280 from the native 2048 JPEGs (DET_SOURCE native; v5-v8 trained on the 1024 cache); refiner reverted to v6 (no negatives, no objectness head); union labels, YOLO11s, 40 epochs, sweep unchanged | 0.4449 in-kernel / 0.4456 offline (conf 0.25) — WASH; box recall +0.016 at equal precision, small-consensus cell unchanged (0.79 -> 0.76, n=372) | not submitted |
+| fused v5-v9 | 2026-09-20 | No kernel run: the 25 pulled fold detectors (v5-v9) fused by WBF on the test images, v9's 5 refiners with flip TTA, cut 0.25 / thr 0.5 / min_area 100 (`scripts/fuse_runs_test.py`, CPU) | **0.4485** (5-run fusion on OOF, v9 refiner, no TTA) | **0.40** (public) |
 
 ## 2026-09-20 — 5-run detector fusion on OOF: +0.005, the one lever that cleared its bar
 
@@ -95,7 +99,8 @@ is +0.0052 paired on identical files and refiner. Consistent with the 2-detector
 refiners are pulled. **Built locally as `runs/fused-v5-v9/submission_fused.csv`
 (`scripts/fuse_runs_test.py`: 25 detectors WBF at their own imgsz/source, v9 refiners with
 flip TTA, cut 0.25 / thr 0.5 / min_area 100) and submitted as the first non-kernel
-submission.** Expected LB: v5's 0.39 + ~0.005, i.e. 0.39 or 0.40 at 2 decimals.
+submission.** Expected LB: v5's 0.39 + ~0.005, i.e. 0.39 or 0.40 at 2 decimals. **LB: 0.40** (1240 rows, 6.9/image;
+v5: 1092 rows at cut 0.3). The OOF->LB offset holds (0.4485 -> 0.40 ~ -0.05); the current best entry.
 
 ## 2026-09-20 — v9 verdict: 1280 px native detector WASH (0.4449); resolution lever closed
 
