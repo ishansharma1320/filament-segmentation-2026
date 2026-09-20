@@ -77,6 +77,26 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v8 | 2026-09-19 | Refiner objectness head (smp aux head, one logit per crop, BCE vs positive/negative) + negatives get pixel-BCE-only seg loss (no Dice on empty targets); objectness saved per crop for offline rescoring (score = conf x obj^b). Same negatives, detector, sweep as v7 | 0.4421 in-kernel / 0.4432 offline (conf 0.25) — WASH/FAIL; obj AUC 0.658 vs conf 0.774, rescoring with obj only loses | not submitted |
 | v9 | 2026-09-19 | Detector at imgsz 1280 from the native 2048 JPEGs (DET_SOURCE native; v5-v8 trained on the 1024 cache); refiner reverted to v6 (no negatives, no objectness head); union labels, YOLO11s, 40 epochs, sweep unchanged | 0.4449 in-kernel / 0.4456 offline (conf 0.25) — WASH; box recall +0.016 at equal precision, small-consensus cell unchanged (0.79 -> 0.76, n=372) | not submitted |
 
+## 2026-09-20 — 5-run detector fusion on OOF: +0.005, the one lever that cleared its bar
+
+`scripts/fuse_runs_oof.py`: for each fold, the v5-v9 fold-k detectors' OOF boxes (all
+five trained without fold k; already on disk) fused by weighted boxes fusion, refined by
+the v9 fold refiner without TTA, vs the v9 boxes alone under the same refiner:
+
+| | cut 0.2 | cut 0.25 | cut 0.3 | cut 0.35 |
+|---|---|---|---|---|
+| single (v9) | 0.4394 | 0.4433 | 0.4430 | 0.4378 |
+| fused (v5-v9) | 0.4451 | **0.4485** | 0.4471 | 0.4423 |
+
+Box level at conf 0.3: P 0.681 R 0.628 fused vs 0.661 / 0.639 single — fusion buys
+precision (fold agreement demotes singletons), and the optimum moves to cut 0.25 where it
+is +0.0052 paired on identical files and refiner. Consistent with the 2-detector probe
+(+0.004): diminishing, but real. It costs no GPU: the 25 fold detectors and the 5 v9
+refiners are pulled. **Built locally as `runs/fused-v5-v9/submission_fused.csv`
+(`scripts/fuse_runs_test.py`: 25 detectors WBF at their own imgsz/source, v9 refiners with
+flip TTA, cut 0.25 / thr 0.5 / min_area 100) and submitted as the first non-kernel
+submission.** Expected LB: v5's 0.39 + ~0.005, i.e. 0.39 or 0.40 at 2 decimals.
+
 ## 2026-09-20 — v9 verdict: 1280 px native detector WASH (0.4449); resolution lever closed
 
 **Run.** 4.7 h (YOLO 23 min/fold at 1280, refiners 22 min/fold, sweep 32 min). OOF PQ
