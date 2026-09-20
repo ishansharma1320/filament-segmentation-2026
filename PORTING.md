@@ -101,7 +101,10 @@ then nothing until 0.42. Pulled the public kernels behind it:
   image; under `src/metric.py` (0.5 per FP) that cannot score 0.46 unless the components
   are mostly right. Scored on the 707 train images with our metric
   (`scripts/classical_probe.py`) to settle whether the LB evaluator penalises FPs the way
-  the organiser's notebook does — see below.
+  the organiser's notebook does — moot: the kernel's last run is **2026-07-09, a month
+  before the 2026-08-07 switch from the Dice-style evaluator to PQ**. Its 0.46 is a score on
+  the old, recall-rewarding evaluator (the one that gave empty masks 0.88); the probe was
+  stopped. Public scores dated before 2026-08-07 are not comparable to ours.
 - `nishantkharga/...-honest-sota-v9`: UNet++/EfficientNet-B4 @1024, consensus masks, TTA,
   disk masking, components — the same family as our v2 (0.41 OOF / 0.36 LB).
 
