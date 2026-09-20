@@ -81,6 +81,30 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v9 | 2026-09-19 | Detector at imgsz 1280 from the native 2048 JPEGs (DET_SOURCE native; v5-v8 trained on the 1024 cache); refiner reverted to v6 (no negatives, no objectness head); union labels, YOLO11s, 40 epochs, sweep unchanged | 0.4449 in-kernel / 0.4456 offline (conf 0.25) — WASH; box recall +0.016 at equal precision, small-consensus cell unchanged (0.79 -> 0.76, n=372) | not submitted |
 | fused v5-v9 | 2026-09-20 | No kernel run: the 25 pulled fold detectors (v5-v9) fused by WBF on the test images, v9's 5 refiners with flip TTA, cut 0.25 / thr 0.5 / min_area 100 (`scripts/fuse_runs_test.py`, CPU) | **0.4485** (5-run fusion on OOF, v9 refiner, no TTA) | **0.40** (public) |
 
+## 2026-09-20 — public leaderboard audit: the 0.55 wall is a copied payload
+
+Rank after the fused entry: **56 / 654** (0.40; 9 teams tied at 0.40, ranks 50-58; median
+0.33). Score distribution: 1 team at 0.62, 1 at 0.58, 3 at 0.56, **41 at exactly 0.55**,
+then nothing until 0.42. Pulled the public kernels behind it:
+
+- `lamhuy8904/solar-filament-unet-segmentation-0-55` ("0.55+", most-copied): trains a
+  3-level toy U-Net on 60 images for 5 epochs, then never uses it — the submission is
+  decoded from a hard-coded lzma+base64 blob (`CHAMPION_PAYLOAD`, "pre-compiled inference
+  database, verified 0.55 on Leaderboard") holding RLEs for all 180 test images. A
+  pre-baked test submission, i.e. the leaked MAGFiLO test annotations in another wrapper.
+  Not decoded, not used. This is the 41-team block; it is not a recipe and it will not
+  survive an honest private split any better than it deserves.
+- `vmerckle/simple-dark-filament-segmentation-0-46`: genuinely no training — disk mask,
+  Gaussian background (sigma 40), dark residual above the 90th percentile, 3x3 dilate,
+  connected components (80 <= area <= 150k), **up to 120 components per image, largest
+  first**, LB 0.46. That is above our trained 0.40 while emitting ~10x our instances per
+  image; under `src/metric.py` (0.5 per FP) that cannot score 0.46 unless the components
+  are mostly right. Scored on the 707 train images with our metric
+  (`scripts/classical_probe.py`) to settle whether the LB evaluator penalises FPs the way
+  the organiser's notebook does — see below.
+- `nishantkharga/...-honest-sota-v9`: UNet++/EfficientNet-B4 @1024, consensus masks, TTA,
+  disk masking, components — the same family as our v2 (0.41 OOF / 0.36 LB).
+
 ## 2026-09-20 — 5-run detector fusion on OOF: +0.005, the one lever that cleared its bar
 
 `scripts/fuse_runs_oof.py`: for each fold, the v5-v9 fold-k detectors' OOF boxes (all

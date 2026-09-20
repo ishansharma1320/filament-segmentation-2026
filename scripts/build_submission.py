@@ -18,8 +18,10 @@ if __name__ == "__main__":
     ap.add_argument("--min-area", type=int, default=100)
     ap.add_argument("--b", type=float, default=0.0, help="score = conf * obj^b")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--crops-dir", default="test_crops")
     a = ap.parse_args()
-    crops = cascade.load_crops(Path(a.run, "test_crops"))
+    crops = cascade.load_crops(Path(a.run, a.crops_dir))
+    assert crops, f"no crop records under {Path(a.run, a.crops_dir)}"
     crops = {f: cascade.rescored(v, a.b) for f, v in crops.items()}
     out_dir = Path(a.run)
     df = cascade.write_cascade_submission(crops, a.cut, a.thr, a.min_area, out_dir)
