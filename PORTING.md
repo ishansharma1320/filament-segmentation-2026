@@ -75,7 +75,52 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v6 | 2026-09-19 | Detector labels: union of annotator records (dedup at mask IoU 0.5, one filament per record per cluster, kept when >= 1/2 of the file's annotators drew it): 5421 boxes vs medoid 5222 (+1/2 and 2/3-support filaments added, medoid-only 1/3-support ones dropped). YOLO11s @1024 / 40 epochs, refiner and sweep unchanged | 0.4441 (conf 0.3, thr 0.5, min_area 100) — WASH | not submitted (= v5) |
 | v7 | 2026-09-19 | Refiner hard negatives: 25 % of refiner samples are detector OOF FP boxes (conf >= 0.2, box IoU < 0.3 to every annotator) with an all-zero target; pipeline reordered (all 5 detectors, then 5 refiners). Detector = v6 (union labels), sweep unchanged | 0.4450 (conf 0.3, thr 0.5, min_area 100) — WASH; neg-reject rate 0.000: the refiner never learned to reject | not submitted |
 | v8 | 2026-09-19 | Refiner objectness head (smp aux head, one logit per crop, BCE vs positive/negative) + negatives get pixel-BCE-only seg loss (no Dice on empty targets); objectness saved per crop for offline rescoring (score = conf x obj^b). Same negatives, detector, sweep as v7 | 0.4421 in-kernel / 0.4432 offline (conf 0.25) — WASH/FAIL; obj AUC 0.658 vs conf 0.774, rescoring with obj only loses | not submitted |
-| v9 | 2026-09-19 | Detector at imgsz 1280 from the native 2048 JPEGs (DET_SOURCE native; v5-v8 trained on the 1024 cache); refiner reverted to v6 (no negatives, no objectness head); union labels, YOLO11s, 40 epochs, sweep unchanged | pending | — |
+| v9 | 2026-09-19 | Detector at imgsz 1280 from the native 2048 JPEGs (DET_SOURCE native; v5-v8 trained on the 1024 cache); refiner reverted to v6 (no negatives, no objectness head); union labels, YOLO11s, 40 epochs, sweep unchanged | 0.4449 in-kernel / 0.4456 offline (conf 0.25) — WASH; box recall +0.016 at equal precision, small-consensus cell unchanged (0.79 -> 0.76, n=372) | not submitted |
+
+## 2026-09-20 — v9 verdict: 1280 px native detector WASH (0.4449); resolution lever closed
+
+**Run.** 4.7 h (YOLO 23 min/fold at 1280, refiners 22 min/fold, sweep 32 min). OOF PQ
+**0.4449 in-kernel / 0.4456 offline at conf 0.25** vs v6 0.4441 / 0.4452: +0.0008 / +0.0004.
+Per fold 0.436 / 0.436 / 0.450 / 0.454 / 0.448. Refiner val Dice 0.811-0.818 (= v6). Not
+submitted (v5's 0.39 LB stands; three submissions left today unused).
+
+**Box level (pooled, conf 0.3): P 0.661 R 0.639 vs v6 P 0.660 R 0.623** — recall +0.016 at
+the same precision, the first detector change that moved the P/R curve at all. But the
+matched instances did not follow: TP 4971 vs 4968, FP 2185 vs 2202. The extra boxes land on
+filaments whose refined masks miss IoU 0.5 or that a neighbour already claims.
+
+**Size x agreement (`scripts/miss_analysis.py`), v9 vs v6 box recall at conf 0.3:**
+consensus < 64 px **0.758 vs 0.790** (n=372: -0.03, inside the +-0.02 noise of that cell),
+consensus 64-150 px 0.908 vs 0.885, > 150 px 0.908 vs 0.885; contested 0.354 / 0.521 /
+0.581 vs 0.368 / 0.507 / 0.531; single-annotator 0.393 / 0.664 / 0.724 vs 0.370 / 0.647 /
+0.702. 1280 px helps every cell EXCEPT the one it was aimed at. The small consensus
+filaments the detector misses are not a resolution problem (they are ~25 px at 1280 and
+~20 px at 1024, both well inside YOLO's stride-8 range); they are the faint/short ones on
+which the detector's confidence is low for the same reason it is low on contested ones.
+**The resolution lever is closed at this model size.**
+
+**Where this leaves the cascade after v5-v9 (five runs, 24 GPU-hours):**
+
+| lever | measured effect on OOF PQ |
+|---|---|
+| detector labels medoid -> union (v6) | 0 |
+| refiner hard negatives (v7) | 0 (loss could not learn them) |
+| refiner objectness head (v8) | 0 (AUC 0.658 < detector conf 0.774) |
+| detector 1024 -> 1280 native (v9) | 0 (+0.016 box recall, +3 TP) |
+| mask-confidence / objectness / semantic rescoring (offline) | 0 |
+| semantic instances as extra candidates (offline) | -0.008 |
+| detector flip TTA, NMS 0.7 (offline) | same P/R curve |
+| 2-detector fusion (offline) | +0.004 |
+| post-processing cuts (offline, every run) | plateau conf 0.25-0.30, thr/min_area flat |
+
+Every variant sits at 0.442-0.446 OOF; v5 is the LB entry at 0.39. The failure profile is
+unchanged since v5: consensus filaments are found (0.85-0.92), contested ones are found at
+the rate annotators agree on them, SQ 0.687 is above the human-vs-human 0.63. The recipe
+is at the ceiling that this label noise sets for a detector-plus-refiner; more single-knob
+runs of this recipe are not expected to pay. The last free measurement in flight is the
+5-run detector fusion on OOF (`scripts/fuse_runs_oof.py`, v5-v9 fold detectors under the
+v9 refiners, boxes already on disk): if it clears +0.005 it is a free test-time gain built
+locally from the pulled weights, no kernel run needed.
 
 ## 2026-09-19 — semantic-fusion probe NULL -> v9 = detector resolution (1280, native frames)
 
