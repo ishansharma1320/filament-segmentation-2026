@@ -54,6 +54,15 @@ Consequences (do not re-derive these, do not violate them):
   at random (label augmentation). Never split by COCO `image_id`.
 - Public MAGFiLO mirrors on Kaggle contain the **test annotations**. Using them is a rules
   violation. This repo reads only the official train JSON. Never attach such a dataset.
+- **Unlabelled GONG H-alpha images are allowed** "for self-supervised pretraining, with no
+  test-label leakage and supplied-image inference" (host clarification as digested in
+  srivatsav-kannan/solar-seg `docs/competition.md`, checked 2026-09-25; Ishan to confirm on
+  the Kaggle rules page). Pretrained *filament* weights of unverifiable provenance are not.
+  Final inference must run on the supplied test images only. The archive is open and
+  huge: `https://gong2.nso.edu/HA/hag/<YYYYMM>/<YYYYMMDD>/<stamp><site>h.jpg`, ~3,800 JPEGs
+  per day, 196 months since 2010, same 2048x2048 format and filenames as the competition
+  data (the train JSON's `url` field points there). Sites S and Z exist there beyond our
+  B/C/L/M/T/U. Team size <= 5, 5 submissions/day, 2 final submissions.
 
 ## Reference implementations (in `reference/`, read-only)
 
