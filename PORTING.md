@@ -81,6 +81,43 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v9 | 2026-09-19 | Detector at imgsz 1280 from the native 2048 JPEGs (DET_SOURCE native; v5-v8 trained on the 1024 cache); refiner reverted to v6 (no negatives, no objectness head); union labels, YOLO11s, 40 epochs, sweep unchanged | 0.4449 in-kernel / 0.4456 offline (conf 0.25) — WASH; box recall +0.016 at equal precision, small-consensus cell unchanged (0.79 -> 0.76, n=372) | not submitted |
 | fused v5-v9 | 2026-09-20 | No kernel run: the 25 pulled fold detectors (v5-v9) fused by WBF on the test images, v9's 5 refiners with flip TTA, cut 0.25 / thr 0.5 / min_area 100 (`scripts/fuse_runs_test.py`, CPU) | **0.4485** (5-run fusion on OOF, v9 refiner, no TTA) | **0.40** (public) |
 
+## 2026-09-25 — oracle ceiling: the "label-noise ceiling" was wrong; headroom is ~0.1 of RQ
+
+`scripts/oracle_ceiling.py`: filaments clustered across a file's records at mask IoU >= 0.5;
+an oracle that knows every record predicts one mask per cluster (the medoid record's copy)
+above a support floor, scored pooled against all records like the evaluator.
+
+| support floor | all 707 | multi-annotator 296 | TP / FP / FN (multi) | SQ | RQ |
+|---|---|---|---|---|---|
+| >= 1 record (union) | 0.767 | 0.656 | 5111 / 3286 / 10 | 0.868 | 0.756 |
+| >= 1/2 | 0.787 | **0.653** | 3974 / 1242 / 1019 | 0.838 | 0.779 |
+| >= 2/3, all | 0.729 | 0.489 | 2227 / 10 / 2766 | 0.794 | 0.616 |
+
+Single-annotator files score 1.0 for any oracle (the record is its own consensus), so the
+multi-annotator column is the informative one. **A perfect consensus predictor reaches
+0.65 on multi-annotated files; our cascade sits at ~0.44 there.** Two corrections to what
+this log has been saying since v2:
+1. The human-vs-human 0.34 is the ceiling for a model that behaves like ONE annotator.
+   A model that predicts the consensus is bounded far higher. Our 0.449 beating 0.34 was
+   never evidence of being at a ceiling.
+2. The oracle's SQ 0.84 includes exact self-matches; a model cannot copy an annotator, so
+   its realistic SQ is the medoid mask against the OTHER records, ~0.70 (we are at 0.687:
+   SQ really is near its ceiling). RQ is not: oracle 0.78 vs ours 0.65. Realistic model
+   ceiling on multi files ~0.70 x 0.78 = **~0.55**, i.e. ~0.1 PQ of headroom, all of it in
+   existence decisions.
+
+**Where the RQ gap is, precisely.** The >= 1/2 oracle predicts every 1/2- and 2/3-support
+filament and eats their FPs in the dissenting record (1242 FP) because the metric pays for
+it (k/n > 0.32 rule, v5 miss analysis). Our detector finds those at 0.39 / 0.66 recall and,
+when its cut is lowered to catch them, also admits 0-support blobs nobody drew - which the
+oracle never emits. The missing signal is "faint but some annotator would draw it" vs
+"faint and nobody would". Three attempts to learn it were null (v6 union labels, v7 hard
+negatives, v8 objectness head), so it is not a labelling fix; it is a model-capacity /
+representation question, which is the one lever (detector capacity) never tested. The
+honest LB 0.56-0.62 entries sit at OOF ~0.61-0.67 by our offset, i.e. at or above this
+realistic ceiling: either they resolve contested existence far better than us, or the
+test set's annotator mix is easier than train's, or they are not honest. Unknown.
+
 ## 2026-09-25 — pretrained-model and unlabelled-data audit (no run)
 
 **Question.** Before pretraining anything on the open GONG archive (rules §6 allow it; the
