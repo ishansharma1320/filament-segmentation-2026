@@ -81,6 +81,42 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v9 | 2026-09-19 | Detector at imgsz 1280 from the native 2048 JPEGs (DET_SOURCE native; v5-v8 trained on the 1024 cache); refiner reverted to v6 (no negatives, no objectness head); union labels, YOLO11s, 40 epochs, sweep unchanged | 0.4449 in-kernel / 0.4456 offline (conf 0.25) — WASH; box recall +0.016 at equal precision, small-consensus cell unchanged (0.79 -> 0.76, n=372) | not submitted |
 | fused v5-v9 | 2026-09-20 | No kernel run: the 25 pulled fold detectors (v5-v9) fused by WBF on the test images, v9's 5 refiners with flip TTA, cut 0.25 / thr 0.5 / min_area 100 (`scripts/fuse_runs_test.py`, CPU) | **0.4485** (5-run fusion on OOF, v9 refiner, no TTA) | **0.40** (public) |
 
+## 2026-09-25 — pretrained-model and unlabelled-data audit (no run)
+
+**Question.** Before pretraining anything on the open GONG archive (rules §6 allow it; the
+archive is ~3,800 frames/day, 196 months, same JPEGs as ours), is there a pretrained solar
+H-alpha model with clean provenance, and is there evidence that unlabelled pretraining pays?
+
+**Candidates found.**
+- `adiercke/DeepFilamentSegmentation` (A&A 2024, GPL-3): YOLOv5 on ChroTel labels, U-Net
+  semi-supervised on GONG pseudo-boxes. **Code only; the single release has no assets, no
+  weights.** Dead end without retraining their pipeline.
+- `ducanhle156/solar-filament-segmentation` (Anh Le, NDSU, 2026 benchmark): six
+  architectures on **958 GONG disks with MAGFiLO annotations** = 887 filament disks + 71
+  empty = exactly the competition's 707 train + 180 test. Their released checkpoint
+  (`sam2_lora_fpn.pt`, SAM 2 Hiera-B+ LoRA + FPN) is therefore **trained on the test
+  labels — unusable for us**, whatever its quality. Their numbers, on their own split and
+  a per-image-mean PQ: U-Net 0.32, SAM 2 LoRA 0.33, best arms within 0.014 Dice of each
+  other; "the hard cases are faint, short filaments near the limb, and every model misses
+  them" (our miss analysis, independently).
+- **Their stage 2 is our lever 1, already run:** SimMIM-style masked pretraining of the
+  SAM 2 encoder on 106,871 unlabelled GONG frames (dates overlapping labelled disks
+  excluded), then the identical LoRA fine-tune on the same folds. Project page, 2026-09:
+  "pretraining bought efficiency, not accuracy ... Pretraining on the unlabelled archive
+  has not yet carried through to the fine-tuned model." A clean, single-variable negative
+  on 100k images of our exact instrument.
+- `nasa-ibm-ai4science/Surya-1.0` (Apache-2): 366M-param transformer on SDO AIA/HMI at
+  4096 px. Not H-alpha, not ground-based, no single-channel transfer story. Not pursued.
+
+**Verdict.** No usable pretrained H-alpha model exists off the shelf; the one clean
+experiment on unlabelled GONG pretraining is null. **Lever 1 (unlabelled-data pretraining)
+is demoted from first to last**: the prior is now negative and the cost (15-30 GPU-h) is
+the highest of the open levers. Caveat kept: Le pretrained a ViT for a semantic head; a
+CNN detector backbone might respond differently. If it is ever tried, it is one run, not a
+programme. Open levers, re-ranked: detector capacity (YOLO11m / RF-DETR, one run), soft
+consensus refiner targets + encoder diversity (one run), oracle-ceiling measurement
+(local, decides whether any of it matters).
+
 ## 2026-09-20 — public leaderboard audit: the 0.55 wall is a copied payload
 
 Rank after the fused entry: **56 / 654** (0.40; 9 teams tied at 0.40, ranks 50-58; median

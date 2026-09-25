@@ -19,3 +19,5 @@ Rules: one line per idea. No elaboration. Nothing here gets built while a rung i
 - Confidence-ranked FP suppression: drop components whose mean prob < p_min (second knob after min_area)
 - Test-time fold agreement: keep an instance only if >= 2 folds predict it (LB-0.70 notebook's fusion rule)
 - Pseudo-label the 180 test images with the fold ensemble for a second training round (check rules first)
+- Unlabelled GONG pretraining for the CNN detector backbone (Le's 100k-disk SimMIM on SAM 2 was null; only worth one run, last)
+- Retrain adiercke's ChroTel-label YOLOv5 recipe as a diversity member (provenance clean, no weights shipped)
