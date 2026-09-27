@@ -63,12 +63,14 @@ Consequences (do not re-derive these, do not violate them):
   are fine "for self-supervised pretraining, with no test-label leakage and supplied-image
   inference". Pretrained *filament* weights of unverifiable provenance are not.
   Final inference must run on the supplied test images only.
-  **Host ruling on sequences (forum, 2026-09-26, asked by Ishan):** "Use of sequences of
-  H-Alpha images is perfectly fine. Of course, your model may not depend on any 'sequence'
-  of observations during inference." So: neighbouring archive frames may be used at
-  TRAINING time (extra views, persistence-derived teacher labels, pseudo-labels), never as
-  inference input. Test-time persistence voting is OFF the table. The host asked to see
-  the report regardless of score. The archive is open and
+  **Host ruling on sequences (forum, 2026-09-26/27, asked by Ishan, confirmed twice):**
+  "You may enhance your model by utilizing more observations (i.e., sequences of temporally
+  neighboring observations) during training. That's OK; we like such ideas. But, your model
+  should eventually predict segmentation solely based on the test images provided to all
+  contestants. In other words, no extra observations should be provided to the trained
+  models during inference." So: neighbouring archive frames at TRAINING time only (extra
+  views, persistence-derived teacher labels, pseudo-labels). Test-time neighbours are OFF
+  the table, definitively. The host asked to see the report regardless of score. The archive is open and
   huge: `https://gong2.nso.edu/HA/hag/<YYYYMM>/<YYYYMMDD>/<stamp><site>h.jpg`, ~3,800 JPEGs
   per day, 196 months since 2010, same 2048x2048 format and filenames as the competition
   data (the train JSON's `url` field points there). Sites S and Z exist there beyond our
