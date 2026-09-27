@@ -62,7 +62,13 @@ Consequences (do not re-derive these, do not violate them):
   (digested in srivatsav-kannan/solar-seg `docs/competition.md`): unlabelled GONG images
   are fine "for self-supervised pretraining, with no test-label leakage and supplied-image
   inference". Pretrained *filament* weights of unverifiable provenance are not.
-  Final inference must run on the supplied test images only. The archive is open and
+  Final inference must run on the supplied test images only.
+  **Host ruling on sequences (forum, 2026-09-26, asked by Ishan):** "Use of sequences of
+  H-Alpha images is perfectly fine. Of course, your model may not depend on any 'sequence'
+  of observations during inference." So: neighbouring archive frames may be used at
+  TRAINING time (extra views, persistence-derived teacher labels, pseudo-labels), never as
+  inference input. Test-time persistence voting is OFF the table. The host asked to see
+  the report regardless of score. The archive is open and
   huge: `https://gong2.nso.edu/HA/hag/<YYYYMM>/<YYYYMMDD>/<stamp><site>h.jpg`, ~3,800 JPEGs
   per day, 196 months since 2010, same 2048x2048 format and filenames as the competition
   data (the train JSON's `url` field points there). Sites S and Z exist there beyond our
