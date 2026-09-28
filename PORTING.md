@@ -81,6 +81,39 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v9 | 2026-09-19 | Detector at imgsz 1280 from the native 2048 JPEGs (DET_SOURCE native; v5-v8 trained on the 1024 cache); refiner reverted to v6 (no negatives, no objectness head); union labels, YOLO11s, 40 epochs, sweep unchanged | 0.4449 in-kernel / 0.4456 offline (conf 0.25) — WASH; box recall +0.016 at equal precision, small-consensus cell unchanged (0.79 -> 0.76, n=372) | not submitted |
 | fused v5-v9 | 2026-09-20 | No kernel run: the 25 pulled fold detectors (v5-v9) fused by WBF on the test images, v9's 5 refiners with flip TTA, cut 0.25 / thr 0.5 / min_area 100 (`scripts/fuse_runs_test.py`, CPU) | **0.4485** (5-run fusion on OOF, v9 refiner, no TTA) | **0.40** (public) |
 
+## 2026-09-28 (later) — the "undrawn" label was wrong for 4 in 10; rescoring re-done with the metric's own label
+
+**Artefact found (Ishan's challenge: "is it the way the data was prepared?").** Every
+candidate-level diagnostic since v5 (miss analysis, persistence probes, the skipped-
+candidate audit) labelled a candidate "drawn" by BOX IoU > 0.5 to a GT box. For thin,
+tilted filaments that test fails often: re-labelling by mask coverage (>= 50 % of a GT
+filament's pixels inside the box) shows **1,532 of the 3,918 "undrawn" v9 candidates were
+drawn** (39 %). With that noise removed, on three-annotator files, "drawn by all three"
+vs "drawn by none" separate cleanly: length 161 vs 71 px (AUC 0.83), image features alone
+AUC 0.87, detector conf 0.87, conf + features **0.93**. So rule 1 of the guidelines
+("too small / faint") IS visible in consensus data, and the earlier "no rule exists"
+paragraph above is withdrawn as stated.
+
+**But the metric does not pay for that label.** Coverage rewards big boxes that swallow a
+small filament; the rescorer trained on it (AUC 0.82 vs conf 0.76) LOWERED pooled OOF PQ,
+0.4456 -> 0.4256. The only honest label is the metric's own: for each v9 OOF candidate,
+its refined mask built exactly as in the pipeline, matched at IoU > 0.5 per record ->
+`tp_frac` (3,839 of 8,821 are a TP in >= half their records; coverage and metric labels
+disagree on 26 % of candidates). Retrained on `tp_frac >= 0.5` with conf + 12 image + 3
+refiner + 2 density features, fold-grouped (`scripts/rescore_learned.py --target tp`):
+AUC 0.864 vs conf 0.846 (+0.018); **pooled OOF PQ best 0.4423 vs baseline 0.4456 (-0.003)**
+across cuts 0.25-0.55. The features carry a little information the detector lacks, and
+none of it survives the instance metric (ordering, overlap resolution, per-record pooling).
+**Learned rescoring on single-image features: closed, this time with the right label.**
+
+**Persistence, re-labelled by mask coverage** (`persistence_probe_long_mask.csv`): AUC
+persistence 0.62-0.64 vs conf 0.73 (all baselines); within conf 0.2-0.3, drawn vs undrawn
+persistence at 3 h 0.67 vs 0.56, at 1 h 0.82 vs 0.75, at 6 h 0.46 vs 0.40 - a small gap the
+box label had hidden. The probe's P/R rule table is invalid under a coverage label (recall
+> 1: several boxes "contain" one filament), so the decisive test is the same as above:
+persistence as an extra feature in the metric-true rescorer on the 158 long-baseline files,
+judged by pooled PQ. Queued.
+
 ## 2026-09-28 — why annotators skip: the rules are known, already learned, and the rest is subjective
 
 **Source.** MAGFiLO paper (Sci. Data 2024): annotators were told to ignore (1) filaments "too

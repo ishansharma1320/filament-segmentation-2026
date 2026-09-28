@@ -174,8 +174,20 @@ def main():
             continue
         g_sets = gt_boxes(meta, gt, f)
         disk_a = disk_fit(main_path)
-        support = np.array([sum(int((box_iou(b[None, :4], g)[0] > 0.5).any()) if len(g) else 0 for g in g_sets)
-                            for b in cand])
+        # support by MASK coverage (>= 50 % of a GT filament's pixels inside the candidate box):
+        # box IoU > 0.5 mislabelled 39 % of drawn candidates as undrawn (2026-09-28 audit)
+        from pycocotools import mask as _mu
+        recs = [[_mu.decode(r).astype(bool) for r in gt[rid]] for rid in meta["records_by_file"][f]]
+        support = np.zeros(len(cand), int)
+        for i, b in enumerate(cand):
+            x0, y0, x1, y1 = [int(round(v)) for v in b[:4]]
+            x0, y0, x1, y1 = max(x0, 0), max(y0, 0), min(x1, 2047), min(y1, 2047)
+            for ms in recs:
+                for m in ms:
+                    tot = m.sum()
+                    if tot and m[y0:y1 + 1, x0:x1 + 1].sum() / tot >= 0.5:
+                        support[i] += 1
+                        break
         per_bucket_hits = {}   # bucket -> list per candidate of [hits, frames, best_iou_sum]
         for p, o in zip(neigh, others):
             bkt = bucket_of(stem, p.name)
@@ -193,6 +205,7 @@ def main():
         for i, b in enumerate(cand):
             row = {"file": f, "fold": k, "conf": float(b[4]), "support": int(support[i]),
                    "n_records": len(g_sets), "w": float(b[2] - b[0]), "h": float(b[3] - b[1]),
+                   "x0": float(b[0]), "y0": float(b[1]), "x1": float(b[2]), "y1": float(b[3]),
                    "rho": float(np.hypot((b[0] + b[2]) / 2 - disk_a[0], (b[1] + b[3]) / 2 - disk_a[1]) / disk_a[2])}
             for bkt, acc in per_bucket_hits.items():
                 if acc[i, 1] > 0:
