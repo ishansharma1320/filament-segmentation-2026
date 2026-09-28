@@ -81,6 +81,43 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v9 | 2026-09-19 | Detector at imgsz 1280 from the native 2048 JPEGs (DET_SOURCE native; v5-v8 trained on the 1024 cache); refiner reverted to v6 (no negatives, no objectness head); union labels, YOLO11s, 40 epochs, sweep unchanged | 0.4449 in-kernel / 0.4456 offline (conf 0.25) — WASH; box recall +0.016 at equal precision, small-consensus cell unchanged (0.79 -> 0.76, n=372) | not submitted |
 | fused v5-v9 | 2026-09-20 | No kernel run: the 25 pulled fold detectors (v5-v9) fused by WBF on the test images, v9's 5 refiners with flip TTA, cut 0.25 / thr 0.5 / min_area 100 (`scripts/fuse_runs_test.py`, CPU) | **0.4485** (5-run fusion on OOF, v9 refiner, no TTA) | **0.40** (public) |
 
+## 2026-09-27 (evening) — long-baseline retest: NO-GO stands; sequence idea closed
+
+The morning probe was challenged (rightly): a ±10 min window cannot separate day-lived
+filaments from minute-lived fibrils, the sample was 2011-only, and persistence was
+measured by our own detector on near-duplicate frames. Retest: **160 random train files
+across 2011-2022** (`fetch_sequences.py --long --sample 160 --seed 2026`, 838 frames),
+same site at ±1 h / ±3 h / ±6 h plus every other site at the same minute; candidate boxes
+projected into each neighbour with a per-frame disk fit and Snodgrass differential
+rotation (`persistence_probe.py`). Alignment validated: confident drawn candidates keep
+mean best IoU 0.72 / 0.62 / 0.52 at 1 / 3 / 6 h (0.55 cross-site), i.e. the projection
+works and the residual decay is real evolution + foreshortening.
+
+| baseline | n cand. | AUC conf | AUC persistence | drawn vs undrawn persistence, conf 0.2-0.3 | conf 0.3-0.5 | conf >= 0.5 |
+|---|---|---|---|---|---|---|
+| cross-site 0 h | 2173 | 0.801 | 0.606 | 0.58 / 0.52 | 0.64 / 0.62 | 0.73 / 0.77 |
+| same-site 1 h | 2325 | 0.800 | 0.610 | 0.79 / 0.80 | 0.89 / 0.88 | 0.94 / 0.93 |
+| same-site 3 h | 2265 | 0.799 | 0.609 | 0.67 / 0.59 | 0.73 / 0.73 | 0.86 / 0.85 |
+| same-site 6 h | 1905 | 0.797 | 0.593 | 0.45 / 0.44 | 0.55 / 0.61 | 0.78 / 0.79 |
+
+At every baseline, and at every confidence above 0.2, the candidates nobody annotated
+persist exactly as long as the annotated ones - through six hours of solar rotation and
+across independent telescopes. They are not fibrils, seeing or noise; they are stable
+solar features (faint filaments, dark lanes, plage boundaries) the annotators did not
+draw. The only band with a persistence gap is conf 0.05-0.10 (0.53 vs 0.33 at 6 h), where
+84 % of candidates are undrawn, so admitting the persistent ones still adds ~2 FP per TP.
+Every gated rule loses precision at least as fast as it gains recall (e.g. 6 h, conf >=
+0.15 & persistence >= 0.8: dP -0.064, dR +0.083; PQ charges 0.5 for each); the AND-prune
+of unstable mid-confidence boxes loses recall 2-4x faster than it gains precision.
+
+**Verdict: NO-GO, final.** Temporal persistence measures what is on the Sun; the metric
+pays for what MAGFiLO annotators drew; on this label set those diverge for roughly half of
+all plausible candidates, and the detector's own confidence already tracks annotator
+behaviour (AUC 0.80) far better than physics does (0.61). Closed at both short and long
+baselines, with alignment verified and a year-balanced sample. Frames kept under
+data/sequences_long/ (gitignored) for the report. Remaining model-side lever: detector
+capacity (one run).
+
 ## 2026-09-27 — sequence idea: NO-GO (temporal persistence does not separate what annotators draw)
 
 **Host ruling (forum, twice):** sequences of neighbouring GONG frames may be used in
