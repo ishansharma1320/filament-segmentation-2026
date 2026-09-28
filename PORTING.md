@@ -81,6 +81,39 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v9 | 2026-09-19 | Detector at imgsz 1280 from the native 2048 JPEGs (DET_SOURCE native; v5-v8 trained on the 1024 cache); refiner reverted to v6 (no negatives, no objectness head); union labels, YOLO11s, 40 epochs, sweep unchanged | 0.4449 in-kernel / 0.4456 offline (conf 0.25) — WASH; box recall +0.016 at equal precision, small-consensus cell unchanged (0.79 -> 0.76, n=372) | not submitted |
 | fused v5-v9 | 2026-09-20 | No kernel run: the 25 pulled fold detectors (v5-v9) fused by WBF on the test images, v9's 5 refiners with flip TTA, cut 0.25 / thr 0.5 / min_area 100 (`scripts/fuse_runs_test.py`, CPU) | **0.4485** (5-run fusion on OOF, v9 refiner, no TTA) | **0.40** (public) |
 
+## 2026-09-28 — why annotators skip: the rules are known, already learned, and the rest is subjective
+
+**Source.** MAGFiLO paper (Sci. Data 2024): annotators were told to ignore (1) filaments "too
+small or too faint to exhibit any feature", (2) "small, close-by filaments which form
+groups", (3) filaments "roughly beyond ±70° from the central meridian"; disagreements were
+deliberately not relabelled ("the labeling task is, to a degree, subjective"); kappa 0.66.
+
+**Rule 3 (limb) - already learned.** 0.0 % of the 8,199 GT filaments lie beyond |lon| 70°
+(1.6 % beyond 60°), and the v9 OOF detector proposes 0.1 % of its conf >= 0.1 candidates
+there, none above conf 0.3. A geometric cut removes nothing.
+
+**Rules 1-2 (size / faintness / grouping) - not separable by anything measurable.**
+`scripts/skipped_candidates.py` on all 8,821 v9 OOF candidates (4,903 drawn by >= 1
+annotator, 3,918 by none): per candidate, box length / width / aspect / area, limb distance,
+contrast vs surrounding ring, darkest-core depth, plage fraction around it, dark-pixel
+fraction, ring texture, plus candidate density within 150 / 300 px and nearest-neighbour
+distance. Single-feature AUCs for "drawn" among conf 0.1-0.5 candidates: every one in
+0.47-0.53 (chance); means drawn vs undrawn: length 107 vs 111 px, aspect 2.01 vs 2.01,
+rho 0.57 vs 0.58, contrast 0.017 vs 0.012, plage 0.058 vs 0.061, density 1.18 vs 1.28.
+A gradient-boosted classifier on all 16 features, grouped 5-fold CV by file: **AUC 0.775
+vs detector conf alone 0.778** (mid-conf: 0.666 vs 0.674). Adds nothing; at any fixed
+candidate count its precision equals the detector's.
+
+**Reading.** Among plausible candidates the annotators drew and did not draw look the same
+in size, darkness, contrast, position and crowding. The detector's confidence already
+encodes whatever is visible (it is the best single predictor and the crop-level objectness
+head, v8, was worse). What remains is the "to a degree, subjective" part the paper names:
+which borderline filaments a given annotator marks. That is annotator randomness, not a
+rule, and no single-image feature - hand-made here, learned by the refiner in v8, or
+temporal in the persistence probes - recovers it. Combined with the oracle ceiling, the
+model-side headroom that is actually reachable is the capacity question (v10) and small
+augmentation gains (views); the rest of the 0.1 is annotator dice.
+
 ## 2026-09-27 (evening) — long-baseline retest: NO-GO stands; sequence idea closed
 
 The morning probe was challenged (rightly): a ±10 min window cannot separate day-lived

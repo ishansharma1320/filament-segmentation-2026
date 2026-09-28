@@ -113,18 +113,23 @@ if DEBUG:
 # PIPELINE selects the recipe: "semantic" = v1-v4 (U-Net prob map -> components);
 # "cascade" = YOLO box detector -> per-box crop refiner -> one mask per detection.
 PIPELINE = "cascade"
-DET_MODEL = "yolo11s.pt"    # ultralytics COCO-pretrained weights (downloaded; internet ON)
+DET_MODEL = "yolo11m.pt"    # v10: capacity lever (v5-v9: yolo11s). COCO-pretrained, downloaded (internet ON)
 DET_IMGSZ = 1280            # v5-v8: 1024 on the cached PNGs (no resize). v9: 1280 from the native
                             # 2048 JPEGs (small filaments: consensus recall 0.79 < 64 px vs 0.89)
 DET_SOURCE = "native"       # "cache": img{IMG_SIZE}.png (v5-v8) | "native": the 2048 JPEGs
 DET_EPOCHS = 40
-DET_BATCH = 8
+DET_BATCH = 4               # yolo11m at 1280 on a 16 GB T4 (yolo11s ran at 8)
 DET_LABEL_RECORD = "union"  # YOLO labels are static files. "medoid": the consensus record (v5).
                             # "union": every record's filaments, deduplicated across annotators at
                             # mask IoU > 0.5, kept when drawn by >= DET_LABEL_MIN_SUPPORT of the
                             # file's annotators (v6; the pooled metric rewards predicting a filament
                             # iff support > PQ / (2 SQ) ~ 0.32, see PORTING 2026-09-19)
 DET_LABEL_MIN_SUPPORT = 0.5
+DET_EXTRA_VIEWS = 0         # v11 lever: N same-site +-10 min archive frames per TRAIN-fold file, added
+                            # to the detector's training list with that file's own labels (val = the
+                            # labelled frames only). Frames: data/sequences/<stem>/ locally, or the
+                            # attached Kaggle dataset ishansharma13/gong-halpha-train-neighbours.
+                            # Host ruling: sequences at training time only. 0 = off (v5-v10).
 DET_CONF_MIN = 0.1          # detector keeps every box above this; the conf cut is swept on OOF
 DET_NMS_IOU = 0.5
 DET_MAX_DET = 100

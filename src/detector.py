@@ -16,13 +16,29 @@ import numpy as np
 import torch
 from pycocotools import mask as mask_util
 
-from config import (CACHE, DET_BATCH, DET_CONF_MIN, DET_EPOCHS, DET_FUSE_IOU, DET_IMGSZ, DET_LABEL_MIN_SUPPORT,
-                    DET_LABEL_RECORD, DET_MAX_DET, DET_MODEL, DET_NMS_IOU, DET_SOURCE, H, SEED, W, WORKERS, log)
+from config import (CACHE, DET_BATCH, DET_CONF_MIN, DET_EPOCHS, DET_EXTRA_VIEWS, DET_FUSE_IOU, DET_IMGSZ,
+                    DET_LABEL_MIN_SUPPORT, DET_LABEL_RECORD, DET_MAX_DET, DET_MODEL, DET_NMS_IOU, DET_SOURCE, H,
+                    REPO, SEED, W, WORKERS, log)
 from data import test_files, test_img_dir, train_files, train_img_dir
 
 
 def yolo_root() -> Path:
     return CACHE / ("yolo" if DET_SOURCE == "cache" else "yolo_native")
+
+
+def views_of(stem: str) -> list[Path]:
+    """Neighbour frames of a train file (training-time extra views), wherever they live:
+    data/sequences/<stem>/ locally, or an attached Kaggle dataset (auto-unzipped per stem)."""
+    roots = [REPO / "data" / "sequences"]
+    kin = Path("/kaggle/input")
+    if kin.is_dir():
+        roots += [p for p in kin.glob("*/gong-halpha-train-neighbours")] + \
+                 [p for p in kin.glob("*/*/gong-halpha-train-neighbours")] + [kin / "gong-halpha-train-neighbours"]
+    for r in roots:
+        for d in (r / stem, r / stem / stem):
+            if d.is_dir():
+                return sorted(p for p in d.glob("*.jpg") if p.stem != stem)
+    return []
 
 
 def image_source(f: str, size: int, split: str = "train") -> Path:
@@ -81,7 +97,7 @@ def build_yolo_labels(meta: dict, gt_rles: dict) -> Path:
     (root / "images").mkdir(parents=True, exist_ok=True)
     (root / "labels").mkdir(exist_ok=True)
     (root / "labels.cache").unlink(missing_ok=True)   # ultralytics' scan cache of the old labels
-    n_box, n_files, support_hist = 0, 0, {}
+    n_box, n_files, n_views, support_hist = 0, 0, 0, {}
     for f in train_files():
         stem = f.rsplit(".", 1)[0]
         src = image_source(f, S)
@@ -99,11 +115,22 @@ def build_yolo_labels(meta: dict, gt_rles: dict) -> Path:
             if w < 1 or h < 1:
                 continue
             lines.append(f"0 {(x + w / 2) / W:.6f} {(y + h / 2) / H:.6f} {w / W:.6f} {h / H:.6f}")
-        (root / "labels" / f"{stem}.txt").write_text("\n".join(lines) + ("\n" if lines else ""))
+        label_txt = "\n".join(lines) + ("\n" if lines else "")
+        (root / "labels" / f"{stem}.txt").write_text(label_txt)
         n_box += len(lines); n_files += 1
         support_hist[len(rids)] = support_hist.get(len(rids), 0) + len(lines)
+        if DET_EXTRA_VIEWS > 0:
+            # extra training views: neighbour frames (+-10 min, same site) with this file's labels.
+            # Rotation in 10 min is ~1 native px - below the box tolerance; masks are never reused.
+            for v in views_of(stem)[:DET_EXTRA_VIEWS]:
+                vdst = root / "images" / f"{stem}__{v.stem}{v.suffix}"
+                if not vdst.exists():
+                    os.symlink(v.resolve(), vdst)
+                (root / "labels" / f"{stem}__{v.stem}.txt").write_text(label_txt)
+                n_views += 1
     log(f"YOLO labels ({DET_LABEL_RECORD}): {n_box} boxes over {n_files} files "
-        f"({n_box / max(n_files, 1):.2f}/file); boxes by n_annotators {support_hist}")
+        f"({n_box / max(n_files, 1):.2f}/file); boxes by n_annotators {support_hist}"
+        + (f"; extra views {n_views} ({n_views / max(n_files, 1):.1f}/file)" if DET_EXTRA_VIEWS else ""))
     return root
 
 
@@ -117,7 +144,11 @@ def fold_yaml(fold: int, meta: dict, train_limit: int = 0, val_limit: int = 0) -
         va = va[:val_limit]
     ext = image_source(next(iter(folds)), meta["size"]).suffix
     paths = lambda fs: "\n".join(str(root / "images" / (f.rsplit(".", 1)[0] + ext)) for f in fs) + "\n"
-    (root / f"fold{fold}_train.txt").write_text(paths(tr))
+    train_txt = paths(tr)
+    if DET_EXTRA_VIEWS > 0:   # views of TRAIN-fold files only; validation stays the labelled frames
+        extra = [p for f in tr for p in sorted((root / "images").glob(f"{f.rsplit('.', 1)[0]}__*{ext}"))]
+        train_txt += "\n".join(str(p) for p in extra) + ("\n" if extra else "")
+    (root / f"fold{fold}_train.txt").write_text(train_txt)
     (root / f"fold{fold}_val.txt").write_text(paths(va))
     y = root / f"fold{fold}.yaml"
     y.write_text(f"path: {root}\ntrain: {root / f'fold{fold}_train.txt'}\nval: {root / f'fold{fold}_val.txt'}\n"

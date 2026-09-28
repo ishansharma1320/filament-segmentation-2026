@@ -49,6 +49,16 @@ Consequences (do not re-derive these, do not violate them):
   Annotators disagree on filament count by a median of 2 and up to 13 per image. Scored
   against all records including their own: 0.76. Public LB top is 0.56. Label noise, not
   model capacity, is the dominant limit: optimise for consensus, control FP/FN.
+- **Annotation guidelines (MAGFiLO paper, Sci. Data 2024; read 2026-09-28).** Annotators
+  were told to IGNORE: (1) "filaments which are too small or too faint to exhibit any
+  feature" (no visible barbs/structure), (2) "small, close-by filaments which form groups",
+  (3) "filaments which are close to the limb of the solar disk (roughly beyond ±70° from
+  the central meridian)". Masks: one piece, no holes, tight to the body, all prominent
+  barbs captured. Three independent annotators per batch, double-blind, two review stages;
+  disagreements were deliberately NOT relabelled ("the labeling task is, to a degree,
+  subjective"), kappa 0.66. Annotators had a temporal viewer but were asked to use it only
+  for chirality of large filaments. => "undrawn" detector candidates are real features
+  that fail rules 1-3; rule 3 is exact geometry, rules 1-2 are size/contrast/density.
 - **Folds are grouped by physical jpeg** (`data.make_folds`, seed 2026): annotator
   duplicates never straddle train/val. Training samples one annotator record per crop
   at random (label augmentation). Never split by COCO `image_id`.
