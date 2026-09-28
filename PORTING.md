@@ -81,6 +81,43 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v9 | 2026-09-19 | Detector at imgsz 1280 from the native 2048 JPEGs (DET_SOURCE native; v5-v8 trained on the 1024 cache); refiner reverted to v6 (no negatives, no objectness head); union labels, YOLO11s, 40 epochs, sweep unchanged | 0.4449 in-kernel / 0.4456 offline (conf 0.25) — WASH; box recall +0.016 at equal precision, small-consensus cell unchanged (0.79 -> 0.76, n=372) | not submitted |
 | fused v5-v9 | 2026-09-20 | No kernel run: the 25 pulled fold detectors (v5-v9) fused by WBF on the test images, v9's 5 refiners with flip TTA, cut 0.25 / thr 0.5 / min_area 100 (`scripts/fuse_runs_test.py`, CPU) | **0.4485** (5-run fusion on OOF, v9 refiner, no TTA) | **0.40** (public) |
 
+## 2026-09-27 — sequence idea: NO-GO (temporal persistence does not separate what annotators draw)
+
+**Host ruling (forum, twice):** sequences of neighbouring GONG frames may be used in
+training only; inference is single-image. So the only admissible form was a teacher:
+measure persistence on training images, distil it into the single-frame model.
+
+**Go/no-go measurement (`scripts/persistence_probe.py`).** 160 train files, 12 same-site
+frames within ±10 min each (`scripts/fetch_sequences.py`). The OOF v9 fold detector at
+conf >= 0.05 on the labelled frame and its neighbours; per candidate, persistence =
+fraction of neighbour frames with a box at IoU >= 0.3; support = annotator records with a
+GT box at IoU > 0.5. 2,903 candidates: 1,344 drawn by >= 1 annotator, 1,559 by none.
+
+| separating "drawn by someone" from "drawn by no one" | AUC |
+|---|---|
+| detector conf | **0.807** |
+| persistence | 0.665 |
+| mean best IoU to neighbours | 0.709 |
+| faint candidates only (conf < 0.3, n=1,742): conf / persistence | 0.641 / 0.610 |
+
+Persistence by conf band, real vs none: [0.2,0.3) 0.94 vs 0.94; [0.3,0.5) 0.97 vs 0.95;
+[0.5,1) 0.99 vs 1.00. **The candidates nobody annotated persist across frames exactly as
+much as the annotated ones.** They are not noise or seeing artefacts; they are physically
+real dark features (faint filaments, fibril lanes, plage boundaries) that the annotators
+chose not to draw. Persistence measures what is on the Sun; the metric pays for what the
+annotators drew; those are different questions, and the detector's own confidence already
+tracks the second one better than physics does.
+
+Gated rule "conf >= 0.3 OR (conf >= 0.15 AND persistence >= 0.9)": P 0.772 -> 0.658,
+R 0.633 -> 0.754 - precision falls faster than recall rises at every setting, and under
+PQ an FP costs the same 0.5 as an FN. Net negative everywhere.
+
+**Verdict: NO-GO.** Download stopped at 29 files (kept under data/sequences/, gitignored).
+Extra training views (label propagation) remain possible as augmentation, expected
++0.005-0.01 at most, parked in FUTURE. The finding is worth a paragraph in the final
+report the host asked for: "unannotated" is not "absent" in MAGFiLO, and any objective
+physical signal will over-predict against this label set.
+
 ## 2026-09-25 — oracle ceiling: the "label-noise ceiling" was wrong; headroom is ~0.1 of RQ
 
 `scripts/oracle_ceiling.py`: filaments clustered across a file's records at mask IoU >= 0.5;
