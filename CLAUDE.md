@@ -129,6 +129,10 @@ Pushing while a version runs CANCELS it: check status first. Kaggle GPU quota ~3
   PORTING.md with its delta, including failures. LB is confirmation, not selection.
   Measured 2026-09-10: public LB ≈ OOF − 0.06 and it tracks OOF under perturbations
   (±1 px probes), so the offset is the test set, not the evaluator. 5 submissions/day.
+- **Candidate-level labels must come from the metric itself** (refined mask vs GT mask at
+  IoU > 0.5 per record, `tp_frac`), never from box IoU (mislabelled 39 % of drawn
+  candidates, 2026-09-28) nor mask coverage (rewards big boxes). Rank/score gains that do
+  not survive pooled PQ are not gains.
 - Single-fold PQ differences under ~0.01 are noise at this label quality; use >= 2 folds
   or the full 5-fold OOF before promoting a change.
 - Any idea not on the current rung goes to `FUTURE.md`, one line, move on.

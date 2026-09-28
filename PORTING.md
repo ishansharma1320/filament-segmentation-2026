@@ -81,6 +81,35 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v9 | 2026-09-19 | Detector at imgsz 1280 from the native 2048 JPEGs (DET_SOURCE native; v5-v8 trained on the 1024 cache); refiner reverted to v6 (no negatives, no objectness head); union labels, YOLO11s, 40 epochs, sweep unchanged | 0.4449 in-kernel / 0.4456 offline (conf 0.25) — WASH; box recall +0.016 at equal precision, small-consensus cell unchanged (0.79 -> 0.76, n=372) | not submitted |
 | fused v5-v9 | 2026-09-20 | No kernel run: the 25 pulled fold detectors (v5-v9) fused by WBF on the test images, v9's 5 refiners with flip TTA, cut 0.25 / thr 0.5 / min_area 100 (`scripts/fuse_runs_test.py`, CPU) | **0.4485** (5-run fusion on OOF, v9 refiner, no TTA) | **0.40** (public) |
 
+## 2026-09-28 (final) — persistence under the metric-true label: adds nothing. Sequence idea closed for good.
+
+`scripts/persistence_pq_test.py`: the 158 long-baseline files; 1,783 of their 1,801 v9 OOF
+candidates joined (box IoU >= 0.85) to the probe's candidates, so each carries the
+metric-true label (`tp_frac`), the 17 single-image/refiner/density features and the
+per-baseline persistence (cross-site 0 h, same-site 1 / 3 / 6 h, means). Fold-grouped GBMs:
+
+| ranking score | AUC (metric TP >= half) | best pooled OOF PQ on the 158 files |
+|---|---|---|
+| detector conf (baseline) | 0.837 | **0.4412** (cut 0.25) |
+| A: conf + image/refiner features | 0.844 | 0.4326 |
+| B: A + persistence | 0.841 | 0.4316 |
+| P: conf + persistence only | 0.808 | 0.4300 |
+
+Persistence lowers the AUC when added to conf alone (0.808 < 0.837) and is flat on top of
+the image features (0.841 vs 0.844); every rescored ranking loses 0.01 PQ to the plain
+detector confidence, at every cut. The small persistence gap seen under the coverage label
+(3 h: 0.67 vs 0.56) does not exist for the label the metric actually pays.
+
+**Verdicts, final and label-clean.** (1) Temporal persistence of a candidate carries no
+information about whether its refined mask will match an annotator's mask beyond what the
+detector's confidence already says. Sequence idea closed at 10 min, 1/3/6 h and cross-site,
+with alignment verified and the metric's own label. (2) Single-image rescoring on top of
+the detector, with hand features, refiner confidence, density, or persistence, does not
+raise PQ. (3) What the box-IoU labelling artefact changed: the guidelines' size rule IS
+visible in consensus data and the detector has learned it; it did not change any
+verdict about score. Method note for the report: candidate-level labels for a mask metric
+must be built from the refined masks, not from boxes; box IoU mislabelled 39 %.
+
 ## 2026-09-28 (later) — the "undrawn" label was wrong for 4 in 10; rescoring re-done with the metric's own label
 
 **Artefact found (Ishan's challenge: "is it the way the data was prepared?").** Every
