@@ -112,7 +112,7 @@ Gated rule "conf >= 0.3 OR (conf >= 0.15 AND persistence >= 0.9)": P 0.772 -> 0.
 R 0.633 -> 0.754 - precision falls faster than recall rises at every setting, and under
 PQ an FP costs the same 0.5 as an FN. Net negative everywhere.
 
-**Verdict: NO-GO.** Download stopped at 29 files (kept under data/sequences/, gitignored).
+**Verdict: NO-GO.** Download had completed: 707 files, 6847 frames, 4.1 GB (kept under data/sequences/, gitignored).
 Extra training views (label propagation) remain possible as augmentation, expected
 +0.005-0.01 at most, parked in FUTURE. The finding is worth a paragraph in the final
 report the host asked for: "unannotated" is not "absent" in MAGFiLO, and any objective
