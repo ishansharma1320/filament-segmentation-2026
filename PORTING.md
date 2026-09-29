@@ -80,8 +80,19 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v8 | 2026-09-19 | Refiner objectness head (smp aux head, one logit per crop, BCE vs positive/negative) + negatives get pixel-BCE-only seg loss (no Dice on empty targets); objectness saved per crop for offline rescoring (score = conf x obj^b). Same negatives, detector, sweep as v7 | 0.4421 in-kernel / 0.4432 offline (conf 0.25) — WASH/FAIL; obj AUC 0.658 vs conf 0.774, rescoring with obj only loses | not submitted |
 | v9 | 2026-09-19 | Detector at imgsz 1280 from the native 2048 JPEGs (DET_SOURCE native; v5-v8 trained on the 1024 cache); refiner reverted to v6 (no negatives, no objectness head); union labels, YOLO11s, 40 epochs, sweep unchanged | 0.4449 in-kernel / 0.4456 offline (conf 0.25) — WASH; box recall +0.016 at equal precision, small-consensus cell unchanged (0.79 -> 0.76, n=372) | not submitted |
 | v10 | 2026-09-28 | Detector capacity: YOLO11s -> **YOLO11m** (batch 8 -> 4 for the T4), everything else = v9 (imgsz 1280 native, union labels, 40 epochs, v6 refiner). Judged on OOF PQ and box recall on contested filaments | 0.4406 (conf 0.3 / thr 0.6 / min_area 100) | not submitted (WASH) |
-| v11 | 2026-09-28 | **Archive views for the detector**: v9 base (YOLO11s @1280 native, union labels) + up to 8 LUT-matched views per train file (other competition sites at the same minute, ECC-aligned; same site <= 1.5 h, labels rotated) = ~1,730 extra training images; DET_EPOCHS 40 -> 15 (~3.4x data). Dataset gong-halpha-train-views-long attached. Refiner = v6 | pending | pending |
+| v11 | 2026-09-28 | **Archive views for the detector**: v9 base (YOLO11s @1280 native, union labels) + up to 8 LUT-matched views per train file (other competition sites at the same minute, ECC-aligned; same site <= 1.5 h, labels rotated) = ~1,730 extra training images; DET_EPOCHS 40 -> 15 (~3.4x data). Dataset gong-halpha-train-views-long attached. Refiner = v6 | 0.4341 (conf 0.3 / thr 0.6) | not submitted (FAIL) |
 | fused v5-v9 | 2026-09-20 | No kernel run: the 25 pulled fold detectors (v5-v9) fused by WBF on the test images, v9's 5 refiners with flip TTA, cut 0.25 / thr 0.5 / min_area 100 (`scripts/fuse_runs_test.py`, CPU) | **0.4485** (5-run fusion on OOF, v9 refiner, no TTA) | **0.40** (public) |
+
+## 2026-09-29 — v11 verdict: archive views FAIL (runs/20260929-120323)
+
+1,736 aligned views built in-kernel (2.5/file). **OOF PQ 0.4341 vs v9 0.4449 (-0.011)**:
+SQ 0.688 (= v9), RQ 0.631 vs 0.648; TP 4779 vs 4969, FN 3420 vs 3223, FP ~equal. The
+views cost recall. Most likely causes, not separable from one run: (a) ~22 % label noise on
+the views (fidelity 0.45-0.47 vs 0.59 on originals) teaching the detector to under-fire,
+(b) the archive/competition blur gap shifting the detector's input distribution,
+(c) 15 epochs over 3.4x data is not equivalent to 40 over the originals. **Verdict: FAIL.
+Training-time sequences closed as extra views, as teacher signal (persistence), and as
+rescoring feature.** Report material: all three measured, all flat or negative.
 
 ## 2026-09-28 — v10 verdict: detector capacity WASH (runs/20260928-182903); capacity lever closed
 
