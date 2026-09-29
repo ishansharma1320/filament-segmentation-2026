@@ -22,3 +22,6 @@ Rules: one line per idea. No elaboration. Nothing here gets built while a rung i
 - Unlabelled GONG pretraining for the CNN detector backbone (Le's 100k-disk SimMIM on SAM 2 was null; only worth one run, last)
 - Retrain adiercke's ChroTel-label YOLOv5 recipe as a diversity member (provenance clean, no weights shipped)
 - Label-propagated training views from same-site ±10 min frames (29 files already fetched; pure augmentation, +0.005-0.01 at best)
+- RF-DETR detector in place of YOLO11 (RF100-VL small-object AP 35.8 vs 7.3; refiner unchanged)
+- Copy-paste augmentation of drawn filaments within the disk for the detector
+- EARL / Bayesian Detector Combination annotator-agreement loss weighting (+0.5-1.8 AP on VinDr-CXR)

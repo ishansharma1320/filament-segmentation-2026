@@ -83,6 +83,54 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v11 | 2026-09-28 | **Archive views for the detector**: v9 base (YOLO11s @1280 native, union labels) + up to 8 LUT-matched views per train file (other competition sites at the same minute, ECC-aligned; same site <= 1.5 h, labels rotated) = ~1,730 extra training images; DET_EPOCHS 40 -> 15 (~3.4x data). Dataset gong-halpha-train-views-long attached. Refiner = v6 | 0.4341 (conf 0.3 / thr 0.6) | not submitted (FAIL) |
 | fused v5-v9 | 2026-09-20 | No kernel run: the 25 pulled fold detectors (v5-v9) fused by WBF on the test images, v9's 5 refiners with flip TTA, cut 0.25 / thr 0.5 / min_area 100 (`scripts/fuse_runs_test.py`, CPU) | **0.4485** (5-run fusion on OOF, v9 refiner, no TTA) | **0.40** (public) |
 
+## 2026-09-29 — where we sit: research survey + error decomposition against a human baseline
+
+**Error decomposition, v9 OOF at the selected cut vs a second human annotator** (every
+ordered annotator pair on the 296 multi-annotator files, same categories; per TP):
+
+| error type | model | human vs human |
+|---|---|---|
+| near-miss: prediction on a drawn filament but IoU 0.2-0.5 (counts FP + FN) | 0.227 | 0.454 |
+| isolated extra object (no drawn filament overlaps) | 0.172 | 0.331 |
+| drawn filament no prediction touches (complete miss) | **0.383** | **0.331** |
+
+Model FP 2,184 = 52 % near-miss, 39 % isolated, 7 % touching, 2 % fragments; FN 3,230 = 35 %
+near-miss, 6 % weak overlap, 59 % untouched; 223 merges (one prediction over >= 2 drawn).
+**Reading.** Against a second expert, the model already has HALF the outline disagreements
+and HALF the extra objects; it is worse on one thing only: complete misses, 16 % more than a
+human (1,905 vs ~1,645 at our TP count). Bringing complete misses to the human rate at equal
+precision is worth ~+0.014 PQ (3414+169 / 7676+130 = 0.459). That, not the 0.1 of the
+self-matching oracle, is the realistic model-side headroom.
+
+**Research survey (three agents, sources in the session log; summary).**
+- *This competition / MAGFiLO:* no verifiable honest work beats our OOF 0.449. Closest
+  peers: Anon-Tokyo OOF 0.4427 / LB 0.38 (ConvNeXt proposals -> refiners), msraaghavan 0.417,
+  nicknnamsa Mask R-CNN 0.417 (merging near-duplicates +0.008), HeShen 0.359, Dharun 0.419.
+  Learned keep/drop scorers failed publicly (ugurk-0 lost PQ, tushhaaarrrr LB 0.37).
+  EdgeAttNet, SABR, ducanhle156 (SAM2 LoRA, per-image PQ 0.33) trained on public MAGFiLO
+  splits that overlap our test set - not comparable. The 0.55 block is a hard-coded payload
+  (and one team's YOLOv8l weights of unverifiable provenance); the 0.62 entries have no
+  write-up. Papers report Dice/IoU/AP on random single-annotator splits, never pooled PQ.
+- *Thin/small-object instance methods:* the only strong signal is on the detector:
+  RF-DETR vs YOLO11 on RF100-VL (100 small real-world datasets), small-object AP 35.8 vs 7.3
+  and YOLO11 flat from N to M (matches our v10). Caveat: detection mAP, not PQ, and an NMS
+  setting may depress YOLO there. Mask2Former and SAM fine-tuning are weak on small, thin,
+  low-contrast objects; a detect-then-refine cascade won the comparable Kaggle Sartorius
+  contest. Copy-paste augmentation: +4.8-6.9 box AP at 10 % of COCO.
+- *Multi-annotator learning:* object-level gains under real disagreement are small
+  (EARL / Bayesian Detector Combination +0.5-1.8 AP on VinDr-CXR; majority-vote labels LOST
+  3.5 AP vs training on all annotations - consistent with our flat label variants).
+  Missing-label losses help only under random deletion. Decision theory (Lipton F*/2
+  analogue): keep a candidate iff q x u > PQ/2 (q = fraction of records it would match,
+  u = its IoU); with pooled PQ over ~8k objects a single global cut on a well-ranked score
+  is near-optimal - which is what our conf sweep already does.
+
+**Ranked next steps, by evidence x cost, all aimed at complete misses:** (1) RF-DETR as the
+detector, refiner unchanged (1-2 runs); (2) copy-paste of drawn filaments within the disk
+(1 run); (3) BDC/EARL-style annotator-agreement loss weighting (1 run, small expected).
+Not worth it: Mask2Former, SAM fine-tune, probabilistic segmentation, missing-label losses,
+semi-supervised archive pseudo-labels (recall at the cost of precision), learned keep/drop.
+
 ## 2026-09-29 — v11 verdict: archive views FAIL (runs/20260929-120323)
 
 1,736 aligned views built in-kernel (2.5/file). **OOF PQ 0.4341 vs v9 0.4449 (-0.011)**:
