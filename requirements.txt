@@ -2,6 +2,7 @@ torch>=2.3
 torchvision
 segmentation-models-pytorch
 ultralytics
+rfdetr[train]
 timm
 opencv-python-headless
 pycocotools

@@ -304,7 +304,8 @@ def find_attached_cascade() -> tuple[list[Path], list[Path]]:
     base = Path("/kaggle/input")
     if not base.is_dir():
         return [], []
-    y = sorted(set(base.glob("*/fold*_yolo.pt")) | set(base.glob("*/*/fold*_yolo.pt")))
+    y = sorted(set(base.glob("*/fold*_yolo.pt")) | set(base.glob("*/*/fold*_yolo.pt")) |
+               set(base.glob("*/fold*_rfdetr.pth")) | set(base.glob("*/*/fold*_rfdetr.pth")))
     r = sorted(set(base.glob("*/fold*_refiner.pt")) | set(base.glob("*/*/fold*_refiner.pt")))
     return y, r
 

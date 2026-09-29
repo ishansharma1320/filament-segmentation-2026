@@ -47,14 +47,16 @@ self-evaluation notebook (azimahmadzadeh/self-evaluation-notebook).
 BOOTSTRAP = """\
 # --- bootstrap: dependencies ------------------------------------------------------------
 import subprocess, sys
-for mod, pkg in (("segmentation_models_pytorch", "segmentation-models-pytorch"), ("ultralytics", "ultralytics")):
+for mod, pkg in (("segmentation_models_pytorch", "segmentation-models-pytorch"), ("ultralytics", "ultralytics"),
+                 ("rfdetr", "rfdetr[train]"), ("pytorch_lightning", "rfdetr[train]")):
     try:
         __import__(mod)
     except ImportError:
         subprocess.run([sys.executable, "-m", "pip", "install", "-q", pkg], check=False)
 import segmentation_models_pytorch as smp
 import ultralytics
-print("smp", smp.__version__, "ultralytics", ultralytics.__version__)
+import rfdetr
+print("smp", smp.__version__, "ultralytics", ultralytics.__version__, "rfdetr", getattr(rfdetr, "__version__", "?"))
 """
 
 RUNNER = """\

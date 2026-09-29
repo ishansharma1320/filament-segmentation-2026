@@ -17,15 +17,110 @@ import numpy as np
 import torch
 from pycocotools import mask as mask_util
 
-from config import (CACHE, DET_BATCH, DET_CONF_MIN, DET_EPOCHS, DET_EXTRA_VIEWS, DET_FUSE_IOU, DET_IMGSZ,
-                    DET_LABEL_MIN_SUPPORT, DET_LABEL_RECORD, DET_MAX_DET, DET_MODEL, DET_NMS_IOU, DET_SOURCE,
-                    DET_VIEWS_MAX_DT_H, H, REPO, SEED, W, WORKERS, log)
+from config import (CACHE, DET_ARCH, DET_BATCH, DET_CONF_MIN, DET_EPOCHS, DET_EXTRA_VIEWS, DET_FUSE_IOU,
+                    DET_IMGSZ, DET_LABEL_MIN_SUPPORT, DET_LABEL_RECORD, DET_MAX_DET, DET_MODEL, DET_NMS_IOU,
+                    DET_SOURCE, DET_VIEWS_MAX_DT_H, H, REPO, RFDETR_BATCH, RFDETR_EPOCHS, RFDETR_EVAL_INTERVAL,
+                    RFDETR_ACCELERATOR, RFDETR_GRAD_ACCUM, RFDETR_LR, RFDETR_RES, RFDETR_SIZE, SEED, W, WORKERS, log)
 from data import test_files, test_img_dir, train_files, train_img_dir
 from views import COMPETITION_SITES, disk_fit, ecc_align, make_view, project_boxes, t_of
 
 
 def yolo_root() -> Path:
     return CACHE / ("yolo" if DET_SOURCE == "cache" else "yolo_native")
+
+
+LABEL_BOXES: dict = {}   # {train file: [(x, y, w, h) native px]} - filled by build_yolo_labels
+
+
+# --- RF-DETR (v12): same labels / folds / outputs as the YOLO path --------------------------
+def _rfdetr_cls():
+    import rfdetr
+    return {"nano": rfdetr.RFDETRNano, "small": rfdetr.RFDETRSmall, "medium": rfdetr.RFDETRMedium,
+            "base": rfdetr.RFDETRBase}[RFDETR_SIZE]
+
+
+def rfdetr_fold_dataset(fold: int, meta: dict, train_limit: int = 0, val_limit: int = 0) -> Path:
+    """Roboflow/COCO layout RF-DETR expects: <root>/{train,valid,test}/_annotations.coco.json with
+    the images beside it (symlinks to the native 2048 JPEGs). One category, id 0, 'filament'.
+    test = the fold's val files (RF-DETR wants the split; run_test stays off)."""
+    import json
+    root = CACHE / "rfdetr" / f"fold{fold}"
+    shutil.rmtree(root, ignore_errors=True)
+    folds = meta["folds"]
+    tr = sorted(f for f, k in folds.items() if k != fold)
+    va = sorted(f for f, k in folds.items() if k == fold)
+    if train_limit:
+        tr = tr[:train_limit]
+    if val_limit:
+        va = va[:val_limit]
+    n_ann = 0
+    for split, fs in (("train", tr), ("valid", va), ("test", va)):
+        d = root / split
+        d.mkdir(parents=True)
+        images, anns = [], []
+        for i, f in enumerate(fs):
+            os.symlink((train_img_dir() / f).resolve(), d / f)
+            images.append({"id": i, "file_name": f, "width": W, "height": H})
+            for x, y, w, h in LABEL_BOXES.get(f, []):
+                anns.append({"id": len(anns), "image_id": i, "category_id": 0,
+                             "bbox": [float(x), float(y), float(w), float(h)], "area": float(w * h), "iscrowd": 0})
+        json.dump({"images": images, "annotations": anns,
+                   "categories": [{"id": 0, "name": "filament", "supercategory": "none"}]},
+                  open(d / "_annotations.coco.json", "w"))
+        if split == "train":
+            n_ann = len(anns)
+    log(f"fold {fold}: RF-DETR dataset {len(tr)} train files ({n_ann} boxes) / {len(va)} val files")
+    return root
+
+
+def _train_rfdetr(fold: int, meta: dict, out_dir: Path, train_limit: int = 0, val_limit: int = 0) -> Path:
+    ds = rfdetr_fold_dataset(fold, meta, train_limit, val_limit)
+    od = out_dir / "rfdetr" / f"fold{fold}"
+    log(f"fold {fold}: RF-DETR {RFDETR_SIZE} res {RFDETR_RES} epochs {RFDETR_EPOCHS} batch "
+        f"{RFDETR_BATCH}x{RFDETR_GRAD_ACCUM} lr {RFDETR_LR}")
+    model = _rfdetr_cls()(resolution=RFDETR_RES)
+    model.train(dataset_dir=str(ds), epochs=RFDETR_EPOCHS, batch_size=RFDETR_BATCH,
+                grad_accum_steps=RFDETR_GRAD_ACCUM, lr=RFDETR_LR, output_dir=str(od), tensorboard=False,
+                num_workers=WORKERS, eval_interval=RFDETR_EVAL_INTERVAL, seed=SEED,
+                accelerator=RFDETR_ACCELERATOR)
+    best = next((od / n for n in ("checkpoint_best_total.pth", "checkpoint_best_ema.pth",
+                                  "checkpoint_best_regular.pth", "last_ema.pth", "checkpoint.pth")
+                 if (od / n).exists()), None)
+    if best is None:
+        raise FileNotFoundError(f"no RF-DETR checkpoint in {od}: {sorted(p.name for p in od.glob('*'))}")
+    dst = out_dir / f"fold{fold}_rfdetr.pth"
+    shutil.copy2(best, dst)
+    shutil.rmtree(od, ignore_errors=True)
+    return dst
+
+
+def _load_rfdetr(weights):
+    cls = _rfdetr_cls()
+    try:
+        return cls.from_checkpoint(str(weights))
+    except Exception:  # noqa: BLE001 - older API: weights through the constructor
+        return cls(pretrain_weights=str(weights), resolution=RFDETR_RES)
+
+
+def _predict_rfdetr(weights, files: list[str], split: str, conf: float, model=None) -> dict:
+    from PIL import Image
+    m = model if model is not None else _load_rfdetr(weights)
+    d = train_img_dir() if split == "train" else test_img_dir()
+    out = {}
+    for i in range(0, len(files), 8):
+        batch = files[i:i + 8]
+        imgs = [Image.open(d / f).convert("RGB") for f in batch]
+        dets = m.predict(imgs, threshold=conf)
+        if not isinstance(dets, list):
+            dets = [dets]
+        for f, det in zip(batch, dets):
+            if det is None or len(det) == 0:
+                out[f] = np.zeros((0, 5), np.float32)
+                continue
+            b = np.concatenate([np.asarray(det.xyxy, np.float32),
+                                np.asarray(det.confidence, np.float32)[:, None]], 1)
+            out[f] = b[np.argsort(-b[:, 4])][:DET_MAX_DET]
+    return out
 
 
 VIEWS_DATASET = "gong-halpha-train-views-long"
@@ -146,6 +241,7 @@ def build_yolo_labels(meta: dict, gt_rles: dict) -> Path:
         else:
             rid = meta["medoid"][f] if DET_LABEL_RECORD == "medoid" else rids[0]
             boxes = [box_of_rle(rle) for rle in gt_rles[rid]]
+        LABEL_BOXES[f] = [(x, y, w, h) for x, y, w, h in boxes if w >= 1 and h >= 1]   # native xywh, reused by RF-DETR
         lines = []
         for x, y, w, h in boxes:
             if w < 1 or h < 1:
@@ -202,7 +298,9 @@ def _device_arg():
 
 def train_detector(fold: int, meta: dict, out_dir: Path, epochs: int = DET_EPOCHS, train_limit: int = 0,
                    val_limit: int = 0) -> Path:
-    """Train YOLO on the fold's train files; returns the copied best.pt (fold{k}_yolo.pt)."""
+    """Train the fold's detector: YOLO -> fold{k}_yolo.pt, or RF-DETR (DET_ARCH) -> fold{k}_rfdetr.pth."""
+    if DET_ARCH == "rfdetr":
+        return _train_rfdetr(fold, meta, out_dir, train_limit, val_limit)
     from ultralytics import YOLO
     from ultralytics import settings as yolo_settings
     yolo_settings.update({"sync": False, "wandb": False, "mlflow": False, "tensorboard": False})
@@ -231,7 +329,10 @@ def predict_boxes(weights, files: list[str], size: int, split: str = "train",
                   conf: float = DET_CONF_MIN, augment: bool = False, nms_iou: float = DET_NMS_IOU,
                   model=None) -> dict[str, np.ndarray]:
     """{file: float32 (n, 5) [x0, y0, x1, y1, conf] in native px, conf-descending}.
-    augment=True: ultralytics flip/scale TTA. nms_iou: NMS overlap threshold."""
+    augment=True: ultralytics flip/scale TTA. nms_iou: NMS overlap threshold.
+    RF-DETR weights (*_rfdetr.pth) are dispatched to the RF-DETR path (no NMS, no TTA)."""
+    if str(weights).endswith("_rfdetr.pth"):
+        return _predict_rfdetr(weights, files, split, conf, model)
     from ultralytics import YOLO
     model = model if model is not None else YOLO(str(weights))
     paths = [str(image_source(f, size, split)) for f in files]
