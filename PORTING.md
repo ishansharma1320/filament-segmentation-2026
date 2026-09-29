@@ -79,8 +79,23 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v7 | 2026-09-19 | Refiner hard negatives: 25 % of refiner samples are detector OOF FP boxes (conf >= 0.2, box IoU < 0.3 to every annotator) with an all-zero target; pipeline reordered (all 5 detectors, then 5 refiners). Detector = v6 (union labels), sweep unchanged | 0.4450 (conf 0.3, thr 0.5, min_area 100) — WASH; neg-reject rate 0.000: the refiner never learned to reject | not submitted |
 | v8 | 2026-09-19 | Refiner objectness head (smp aux head, one logit per crop, BCE vs positive/negative) + negatives get pixel-BCE-only seg loss (no Dice on empty targets); objectness saved per crop for offline rescoring (score = conf x obj^b). Same negatives, detector, sweep as v7 | 0.4421 in-kernel / 0.4432 offline (conf 0.25) — WASH/FAIL; obj AUC 0.658 vs conf 0.774, rescoring with obj only loses | not submitted |
 | v9 | 2026-09-19 | Detector at imgsz 1280 from the native 2048 JPEGs (DET_SOURCE native; v5-v8 trained on the 1024 cache); refiner reverted to v6 (no negatives, no objectness head); union labels, YOLO11s, 40 epochs, sweep unchanged | 0.4449 in-kernel / 0.4456 offline (conf 0.25) — WASH; box recall +0.016 at equal precision, small-consensus cell unchanged (0.79 -> 0.76, n=372) | not submitted |
-| v10 | 2026-09-28 | Detector capacity: YOLO11s -> **YOLO11m** (batch 8 -> 4 for the T4), everything else = v9 (imgsz 1280 native, union labels, 40 epochs, v6 refiner). Judged on OOF PQ and box recall on contested filaments | pending | pending |
+| v10 | 2026-09-28 | Detector capacity: YOLO11s -> **YOLO11m** (batch 8 -> 4 for the T4), everything else = v9 (imgsz 1280 native, union labels, 40 epochs, v6 refiner). Judged on OOF PQ and box recall on contested filaments | 0.4406 (conf 0.3 / thr 0.6 / min_area 100) | not submitted (WASH) |
+| v11 | 2026-09-28 | **Archive views for the detector**: v9 base (YOLO11s @1280 native, union labels) + up to 8 LUT-matched views per train file (other competition sites at the same minute, ECC-aligned; same site <= 1.5 h, labels rotated) = ~1,730 extra training images; DET_EPOCHS 40 -> 15 (~3.4x data). Dataset gong-halpha-train-views-long attached. Refiner = v6 | pending | pending |
 | fused v5-v9 | 2026-09-20 | No kernel run: the 25 pulled fold detectors (v5-v9) fused by WBF on the test images, v9's 5 refiners with flip TTA, cut 0.25 / thr 0.5 / min_area 100 (`scripts/fuse_runs_test.py`, CPU) | **0.4485** (5-run fusion on OOF, v9 refiner, no TTA) | **0.40** (public) |
+
+## 2026-09-28 — v10 verdict: detector capacity WASH (runs/20260928-182903); capacity lever closed
+
+YOLO11m (20.1M params) for YOLO11s (9.4M), single variable vs v9. 6.5 h on a T4 (YOLO
+~44 min/fold). **OOF PQ 0.4406 vs v9 0.4449 (-0.004)**; box P/R at conf 0.3 pooled
+P 0.664 / R 0.620 vs v9 0.661 / 0.639. Miss analysis, recall by size for consensus /
+contested / single-annotator filaments: v10 0.785 / 0.892 / 0.864, 0.348 / 0.524 / 0.505,
+0.380 / 0.645 / 0.686 vs v9 0.758 / 0.908 / 0.908, 0.354 / 0.521 / 0.581, 0.393 / 0.664 /
+0.724. The bigger detector trades a little small-consensus recall for losses on large
+filaments; contested recall is unchanged. **Verdict: WASH. The "a small model cannot see
+the cue" hypothesis is dead; the cue is not in the single image at any capacity we can
+run.** Lever ledger for the detector is now complete: labels, negatives, objectness,
+resolution, capacity, rescoring, persistence - all flat. Remaining: views (v11), then the
+report.
 
 ## 2026-09-28 — run 2 design: archive views for the detector (v11), measured before building
 

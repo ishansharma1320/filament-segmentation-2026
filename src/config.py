@@ -113,12 +113,12 @@ if DEBUG:
 # PIPELINE selects the recipe: "semantic" = v1-v4 (U-Net prob map -> components);
 # "cascade" = YOLO box detector -> per-box crop refiner -> one mask per detection.
 PIPELINE = "cascade"
-DET_MODEL = "yolo11m.pt"    # v10: capacity lever (v5-v9: yolo11s). COCO-pretrained, downloaded (internet ON)
+DET_MODEL = "yolo11s.pt"    # v10 tried yolo11m: WASH (0.4406 vs 0.4449, contested recall flat). COCO-pretrained
 DET_IMGSZ = 1280            # v5-v8: 1024 on the cached PNGs (no resize). v9: 1280 from the native
                             # 2048 JPEGs (small filaments: consensus recall 0.79 < 64 px vs 0.89)
 DET_SOURCE = "native"       # "cache": img{IMG_SIZE}.png (v5-v8) | "native": the 2048 JPEGs
-DET_EPOCHS = 40
-DET_BATCH = 4               # yolo11m at 1280 on a 16 GB T4 (yolo11s ran at 8)
+DET_EPOCHS = 15             # v11: ~3.4x training images with views -> 15 epochs ~ 51 v9-epochs of steps
+DET_BATCH = 8
 DET_LABEL_RECORD = "union"  # YOLO labels are static files. "medoid": the consensus record (v5).
                             # "union": every record's filaments, deduplicated across annotators at
                             # mask IoU > 0.5, kept when drawn by >= DET_LABEL_MIN_SUPPORT of the
