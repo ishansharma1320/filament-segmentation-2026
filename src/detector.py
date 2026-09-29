@@ -12,33 +12,69 @@ import os
 import shutil
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 from pycocotools import mask as mask_util
 
 from config import (CACHE, DET_BATCH, DET_CONF_MIN, DET_EPOCHS, DET_EXTRA_VIEWS, DET_FUSE_IOU, DET_IMGSZ,
-                    DET_LABEL_MIN_SUPPORT, DET_LABEL_RECORD, DET_MAX_DET, DET_MODEL, DET_NMS_IOU, DET_SOURCE, H,
-                    REPO, SEED, W, WORKERS, log)
+                    DET_LABEL_MIN_SUPPORT, DET_LABEL_RECORD, DET_MAX_DET, DET_MODEL, DET_NMS_IOU, DET_SOURCE,
+                    DET_VIEWS_MAX_DT_H, H, REPO, SEED, W, WORKERS, log)
 from data import test_files, test_img_dir, train_files, train_img_dir
+from views import COMPETITION_SITES, disk_fit, ecc_align, make_view, project_boxes, t_of
 
 
 def yolo_root() -> Path:
     return CACHE / ("yolo" if DET_SOURCE == "cache" else "yolo_native")
 
 
+VIEWS_DATASET = "gong-halpha-train-views-long"
+
+
 def views_of(stem: str) -> list[Path]:
-    """Neighbour frames of a train file (training-time extra views), wherever they live:
-    data/sequences/<stem>/ locally, or an attached Kaggle dataset (auto-unzipped per stem)."""
-    roots = [REPO / "data" / "sequences"]
+    """Archive frames around a train file (training-time extra views), wherever they live:
+    data/sequences_long/<stem>/ locally, or the attached Kaggle dataset (auto-unzipped per stem)."""
+    roots = [REPO / "data" / "sequences_long"]
     kin = Path("/kaggle/input")
     if kin.is_dir():
-        roots += [p for p in kin.glob("*/gong-halpha-train-neighbours")] + \
-                 [p for p in kin.glob("*/*/gong-halpha-train-neighbours")] + [kin / "gong-halpha-train-neighbours"]
+        roots += [p for p in kin.glob(f"*/{VIEWS_DATASET}")] + [p for p in kin.glob(f"*/*/{VIEWS_DATASET}")] + \
+                 [kin / VIEWS_DATASET]
     for r in roots:
         for d in (r / stem, r / stem / stem):
             if d.is_dir():
                 return sorted(p for p in d.glob("*.jpg") if p.stem != stem)
     return []
+
+
+def build_views(stem: str, ref_img: np.ndarray, boxes_xywh: np.ndarray, max_views: int):
+    """Yield (view_name, view_image uint8 HxW, boxes xywh) for the usable archive frames of a
+    train file: other competition sites at the same minute (ECC-aligned onto the reference,
+    labels unchanged) and the same site within DET_VIEWS_MAX_DT_H (labels rotated)."""
+    disk_ref = None
+    n = 0
+    for p in views_of(stem):
+        if n >= max_views or p.stem[14] not in COMPETITION_SITES:
+            continue
+        dt_days = (t_of(p.stem) - t_of(stem)).total_seconds() / 86400
+        img = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
+        if img is None or img.shape != (H, W):
+            continue
+        v = make_view(img)
+        if p.stem[14] != stem[14]:
+            if abs(dt_days) * 24 > 0.2:
+                continue
+            v, info = ecc_align(ref_img, v)
+            if v is None:
+                continue
+            bx = boxes_xywh.copy()
+        else:
+            if abs(dt_days) * 24 > DET_VIEWS_MAX_DT_H:
+                continue
+            disk_ref = disk_ref or disk_fit(ref_img)
+            bx, valid = project_boxes(boxes_xywh, disk_ref, dt_days)
+            bx = bx[valid]
+        n += 1
+        yield p.stem, v, bx
 
 
 def image_source(f: str, size: int, split: str = "train") -> Path:
@@ -120,13 +156,17 @@ def build_yolo_labels(meta: dict, gt_rles: dict) -> Path:
         n_box += len(lines); n_files += 1
         support_hist[len(rids)] = support_hist.get(len(rids), 0) + len(lines)
         if DET_EXTRA_VIEWS > 0:
-            # extra training views: neighbour frames (+-10 min, same site) with this file's labels.
-            # Rotation in 10 min is ~1 native px - below the box tolerance; masks are never reused.
-            for v in views_of(stem)[:DET_EXTRA_VIEWS]:
-                vdst = root / "images" / f"{stem}__{v.stem}{v.suffix}"
+            # extra training views from the archive (src/views.py): materialised as JPEGs with
+            # their own (aligned / rotated) box labels; masks are never reused
+            ref_img = cv2.imread(str(train_img_dir() / f), cv2.IMREAD_GRAYSCALE)
+            bxy = np.array([[x, y, w, h] for x, y, w, h in boxes if w >= 1 and h >= 1], np.float32).reshape(-1, 4)
+            for vname, vimg, vboxes in build_views(stem, ref_img, bxy, DET_EXTRA_VIEWS):
+                vdst = root / "images" / f"{stem}__{vname}.jpg"
                 if not vdst.exists():
-                    os.symlink(v.resolve(), vdst)
-                (root / "labels" / f"{stem}__{v.stem}.txt").write_text(label_txt)
+                    cv2.imwrite(str(vdst), vimg, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                vl = [f"0 {(x + w / 2) / W:.6f} {(y + h / 2) / H:.6f} {w / W:.6f} {h / H:.6f}"
+                      for x, y, w, h in vboxes if w >= 1 and h >= 1]
+                (root / "labels" / f"{stem}__{vname}.txt").write_text("\n".join(vl) + ("\n" if vl else ""))
                 n_views += 1
     log(f"YOLO labels ({DET_LABEL_RECORD}): {n_box} boxes over {n_files} files "
         f"({n_box / max(n_files, 1):.2f}/file); boxes by n_annotators {support_hist}"

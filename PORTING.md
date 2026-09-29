@@ -82,6 +82,29 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v10 | 2026-09-28 | Detector capacity: YOLO11s -> **YOLO11m** (batch 8 -> 4 for the T4), everything else = v9 (imgsz 1280 native, union labels, 40 epochs, v6 refiner). Judged on OOF PQ and box recall on contested filaments | pending | pending |
 | fused v5-v9 | 2026-09-20 | No kernel run: the 25 pulled fold detectors (v5-v9) fused by WBF on the test images, v9's 5 refiners with flip TTA, cut 0.25 / thr 0.5 / min_area 100 (`scripts/fuse_runs_test.py`, CPU) | **0.4485** (5-run fusion on OOF, v9 refiner, no TTA) | **0.40** (public) |
 
+## 2026-09-28 — run 2 design: archive views for the detector (v11), measured before building
+
+**Frames.** For all 707 train files: other GONG sites at the same minute and the same site
+at ±1 h / ±3 h (3,237 frames, `fetch_sequences.py --long`; Kaggle dataset
+`ishansharma13/gong-halpha-train-views-long`, private). Sites S and Z are not in the
+competition and sit at 4-33 deg of roll: excluded.
+
+**What the competition did to the archive frames** (24 same-frame pairs): no shift, no
+rotation, no scale (my earlier "0.5 % rescale" was disk-fit noise); highlights clipped by a
+monotone LUT (identity to ~150, flat at ~152); and their JPEGs carry 1.5-2x more
+high-frequency content that the archive JPEGs lack - no unsharp setting recovers it (it is
+a less-compressed source). Views = LUT(archive), a mild residual blur gap.
+
+**Label fidelity on views** (union GT boxes vs the v9 fold detector's boxes on the view, 10
+files; the ORIGINAL frame scores recall 0.59 / mean IoU 0.54): other-site frames raw 0.31
+(centring differs by 2-15 px between telescopes) -> **0.45 after a per-frame ECC rigid
+alignment**; same-site 1 h with rotation-projected labels **0.47** (median offset < 3 px:
+the projection is right; the spread is evolution + detection variance); 3 h 0.39; 6 h 0.31.
+Decision: use other-site (aligned) and same-site <= 1.5 h views only; drop 3 h / 6 h.
+Roughly 3-4 views per file, ~2,500 extra training images of genuinely different seeing,
+optics and exposure, labels ~78 % as consistent as the originals. Expected value stated
+before the run: +0.005-0.01 OOF; a coin-flip on being measurable at all.
+
 ## 2026-09-28 (final) — persistence under the metric-true label: adds nothing. Sequence idea closed for good.
 
 `scripts/persistence_pq_test.py`: the 158 long-baseline files; 1,783 of their 1,801 v9 OOF

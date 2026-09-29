@@ -22,7 +22,7 @@ OUT = REPO / "notebooks" / "submission.ipynb"
 
 # Dependency order. A cell may only use names defined in cells above it.
 MODULES = ["config", "data", "rle", "metric", "postprocess", "dataset", "model", "evaluate",
-           "detector", "refiner", "cascade", "pipeline"]
+           "views", "detector", "refiner", "cascade", "pipeline"]
 
 _SIBLING = re.compile(rf"^\s*(from|import)\s+({'|'.join(MODULES)})\b")
 

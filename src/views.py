@@ -87,6 +87,35 @@ def project_boxes(boxes: np.ndarray, disk_ref, dt_days: float) -> tuple[np.ndarr
     return out, valid
 
 
+COMPETITION_SITES = "BCLMTU"   # archive sites S and Z are not in the competition and sit at
+                               # different roll angles (up to 32 deg measured) - never used
+
+
+def ecc_align(ref: np.ndarray, view: np.ndarray, max_roll_deg: float = 1.0, min_corr: float = 0.9):
+    """Rigid (roll + shift) alignment of a same-minute OTHER-SITE frame onto the reference
+    frame, estimated by ECC on 512 px copies (sites differ by 2-15 px of centring and
+    < 0.5 deg of roll). Returns (warped view at full res, info dict) or (None, info) when
+    the estimate is not trustworthy. Same-site frames must NOT go through this (they are
+    already in the reference geometry; their labels are rotated instead)."""
+    cs = cv2.resize(ref.astype(np.float32), (512, 512), interpolation=cv2.INTER_AREA)
+    vs = cv2.resize(view.astype(np.float32), (512, 512), interpolation=cv2.INTER_AREA)
+    warp = np.eye(2, 3, dtype=np.float32)
+    try:
+        cc, warp = cv2.findTransformECC(cs, vs, warp, cv2.MOTION_EUCLIDEAN,
+                                        (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 300, 1e-6), None, 7)
+    except cv2.error:
+        return None, {"ok": False, "reason": "ecc failed"}
+    roll = float(np.degrees(np.arctan2(warp[1, 0], warp[0, 0])))
+    info = {"ok": True, "roll": roll, "dx": float(warp[0, 2] * 4), "dy": float(warp[1, 2] * 4), "corr": float(cc)}
+    if abs(roll) > max_roll_deg or cc < min_corr:
+        info["ok"] = False; info["reason"] = "roll/corr out of range"
+        return None, info
+    full = warp.copy(); full[:, 2] *= 4
+    # warp maps ref -> view; WARP_INVERSE_MAP brings the view into the ref frame
+    out = cv2.warpAffine(view, full, (W, H), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP, borderValue=0)
+    return out, info
+
+
 DEFAULT_LUT = None
 
 

@@ -125,11 +125,16 @@ DET_LABEL_RECORD = "union"  # YOLO labels are static files. "medoid": the consen
                             # file's annotators (v6; the pooled metric rewards predicting a filament
                             # iff support > PQ / (2 SQ) ~ 0.32, see PORTING 2026-09-19)
 DET_LABEL_MIN_SUPPORT = 0.5
-DET_EXTRA_VIEWS = 0         # v11 lever: N same-site +-10 min archive frames per TRAIN-fold file, added
-                            # to the detector's training list with that file's own labels (val = the
-                            # labelled frames only). Frames: data/sequences/<stem>/ locally, or the
-                            # attached Kaggle dataset ishansharma13/gong-halpha-train-neighbours.
-                            # Host ruling: sequences at training time only. 0 = off (v5-v10).
+DET_EXTRA_VIEWS = 8         # v11 lever: archive views per TRAIN-fold file added to the detector's
+                            # training list (val = the labelled frames only). 0 = off (v5-v10);
+                            # N > 0 = up to N views per file from data/sequences_long/<stem>/ or the
+                            # attached Kaggle dataset ishansharma13/gong-halpha-train-views-long:
+                            # other competition sites at the same minute (ECC-aligned, labels
+                            # unchanged) and the same site within DET_VIEWS_MAX_DT_H hours (labels
+                            # rotated). Views are LUT-matched to the competition processing
+                            # (src/views.py). Host ruling: sequences at training time only.
+DET_VIEWS_MAX_DT_H = 1.5    # same-site views beyond this are dropped: label fidelity vs the v9
+                            # detector is 0.47 at 1 h, 0.39 at 3 h, 0.31 at 6 h (original frame 0.59)
 DET_CONF_MIN = 0.1          # detector keeps every box above this; the conf cut is swept on OOF
 DET_NMS_IOU = 0.5
 DET_MAX_DET = 100
