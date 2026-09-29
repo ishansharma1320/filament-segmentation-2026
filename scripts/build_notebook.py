@@ -46,7 +46,8 @@ self-evaluation notebook (azimahmadzadeh/self-evaluation-notebook).
 # pushes; pretrained encoder weights need it too).
 BOOTSTRAP = """\
 # --- bootstrap: dependencies ------------------------------------------------------------
-import subprocess, sys
+import os, subprocess, sys
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")  # before any CUDA allocation
 for mod, pkg in (("segmentation_models_pytorch", "segmentation-models-pytorch"), ("ultralytics", "ultralytics"),
                  ("rfdetr", "rfdetr[train]"), ("pytorch_lightning", "rfdetr[train]")):
     try:

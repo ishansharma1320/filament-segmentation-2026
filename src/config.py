@@ -116,11 +116,13 @@ PIPELINE = "cascade"
 DET_ARCH = "rfdetr"         # v12: "rfdetr" (query-based, no NMS, DINOv2 backbone; RF100-VL small-object AP
                             # 35.8 vs YOLO11's 7.3) | "yolo" (v5-v11). Same union labels, folds, refiner.
 RFDETR_SIZE = "medium"      # nano | small | medium | base (Apache-2.0 variants)
-RFDETR_RES = 1024           # must be divisible by patch 16 x 2 windows = 32 (and 64 for square resize);
-                            # median filament 96 native px -> 48 px at 1024
+RFDETR_RES = 896            # must be divisible by patch 16 x 2 windows = 32 (and 64 for square resize);
+                            # median filament 96 native px -> 42 px. v12a at 1024 + expanded scales (train sizes
+                            # up to 1184) went OOM on the T4 at batch 2
 RFDETR_EPOCHS = 25            # fine-tuned from the COCO-pretrained RF-DETR; 40 at 1024 px risks the 12 h cap
-RFDETR_BATCH = 2             # per step; T4 memory at 1024 px is untested, so small batch + accumulation
-RFDETR_GRAD_ACCUM = 8       # effective batch 16 (RF-DETR recommended total)
+RFDETR_BATCH = 1             # per step (T4 16 GB); effective batch via accumulation
+RFDETR_GRAD_ACCUM = 16      # effective batch 16 (RF-DETR recommended total)
+RFDETR_EXPANDED_SCALES = False  # multi-scale jitter 800-1024 at res 896 (expanded would reach 1056)
 RFDETR_LR = 1e-4
 RFDETR_EVAL_INTERVAL = 5    # validation every N epochs (saves ~20 % of T4 time)
 RFDETR_ACCELERATOR = "auto" # Lightning accelerator; the local Mac smoke test uses "cpu" (MPS AMP needs float64)

@@ -20,7 +20,8 @@ from pycocotools import mask as mask_util
 from config import (CACHE, DET_ARCH, DET_BATCH, DET_CONF_MIN, DET_EPOCHS, DET_EXTRA_VIEWS, DET_FUSE_IOU,
                     DET_IMGSZ, DET_LABEL_MIN_SUPPORT, DET_LABEL_RECORD, DET_MAX_DET, DET_MODEL, DET_NMS_IOU,
                     DET_SOURCE, DET_VIEWS_MAX_DT_H, H, REPO, RFDETR_BATCH, RFDETR_EPOCHS, RFDETR_EVAL_INTERVAL,
-                    RFDETR_ACCELERATOR, RFDETR_GRAD_ACCUM, RFDETR_LR, RFDETR_RES, RFDETR_SIZE, SEED, W, WORKERS, log)
+                    RFDETR_ACCELERATOR, RFDETR_EXPANDED_SCALES, RFDETR_GRAD_ACCUM, RFDETR_LR, RFDETR_RES,
+                    RFDETR_SIZE, SEED, W, WORKERS, log)
 from data import test_files, test_img_dir, train_files, train_img_dir
 from views import COMPETITION_SITES, disk_fit, ecc_align, make_view, project_boxes, t_of
 
@@ -82,7 +83,7 @@ def _train_rfdetr(fold: int, meta: dict, out_dir: Path, train_limit: int = 0, va
     model.train(dataset_dir=str(ds), epochs=RFDETR_EPOCHS, batch_size=RFDETR_BATCH,
                 grad_accum_steps=RFDETR_GRAD_ACCUM, lr=RFDETR_LR, output_dir=str(od), tensorboard=False,
                 num_workers=WORKERS, eval_interval=RFDETR_EVAL_INTERVAL, seed=SEED,
-                accelerator=RFDETR_ACCELERATOR)
+                accelerator=RFDETR_ACCELERATOR, expanded_scales=RFDETR_EXPANDED_SCALES)
     best = next((od / n for n in ("checkpoint_best_total.pth", "checkpoint_best_ema.pth",
                                   "checkpoint_best_regular.pth", "last_ema.pth", "checkpoint.pth")
                  if (od / n).exists()), None)
