@@ -81,8 +81,37 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v9 | 2026-09-19 | Detector at imgsz 1280 from the native 2048 JPEGs (DET_SOURCE native; v5-v8 trained on the 1024 cache); refiner reverted to v6 (no negatives, no objectness head); union labels, YOLO11s, 40 epochs, sweep unchanged | 0.4449 in-kernel / 0.4456 offline (conf 0.25) — WASH; box recall +0.016 at equal precision, small-consensus cell unchanged (0.79 -> 0.76, n=372) | not submitted |
 | v10 | 2026-09-28 | Detector capacity: YOLO11s -> **YOLO11m** (batch 8 -> 4 for the T4), everything else = v9 (imgsz 1280 native, union labels, 40 epochs, v6 refiner). Judged on OOF PQ and box recall on contested filaments | 0.4406 (conf 0.3 / thr 0.6 / min_area 100) | not submitted (WASH) |
 | v11 | 2026-09-28 | **Archive views for the detector**: v9 base (YOLO11s @1280 native, union labels) + up to 8 LUT-matched views per train file (other competition sites at the same minute, ECC-aligned; same site <= 1.5 h, labels rotated) = ~1,730 extra training images; DET_EPOCHS 40 -> 15 (~3.4x data). Dataset gong-halpha-train-views-long attached. Refiner = v6 | 0.4341 (conf 0.3 / thr 0.6) | not submitted (FAIL) |
-| v12 (v13 kernel) | 2026-09-29 | **Detector = RF-DETR Medium** (rfdetr 1.11, Apache-2.0; COCO-pretrained, DINOv2 windowed backbone, no NMS). Kernel v12 at 1024 px + expanded multi-scale (train sizes up to 1184), batch 2: **CUDA OOM on the T4 in the first steps** (crash guard held). Re-pushed at 896 px, normal multi-scale (800-1024), batch 1 x accum 16, expandable CUDA segments; 25 epochs, lr 1e-4, on the native JPEGs; same union labels, folds, v6 refiner. Box floor 0.05; sweep conf 0.1-0.6 at thr 0.6 / min_area 100. Judged on OOF PQ + complete misses per TP (v9 0.383, human 0.331) + contested recall | pending | pending |
+| v12 (v13 kernel) | 2026-09-29 | **Detector = RF-DETR Medium** (rfdetr 1.11, Apache-2.0; COCO-pretrained, DINOv2 windowed backbone, no NMS). Kernel v12 at 1024 px + expanded multi-scale (train sizes up to 1184), batch 2: **CUDA OOM on the T4 in the first steps** (crash guard held). Re-pushed at 896 px, normal multi-scale (800-1024), batch 1 x accum 16, expandable CUDA segments; 25 epochs, lr 1e-4, on the native JPEGs; same union labels, folds, v6 refiner. Box floor 0.05; sweep conf 0.1-0.6 at thr 0.6 / min_area 100. Judged on OOF PQ + complete misses per TP (v9 0.383, human 0.331) + contested recall | **fold 0 only: 0.4200 vs v9 fold 0 0.4361** (detector 148 min/fold -> budget stopped after 1 fold) | not submitted (FAIL) |
 | fused v5-v9 | 2026-09-20 | No kernel run: the 25 pulled fold detectors (v5-v9) fused by WBF on the test images, v9's 5 refiners with flip TTA, cut 0.25 / thr 0.5 / min_area 100 (`scripts/fuse_runs_test.py`, CPU) | **0.4485** (5-run fusion on OOF, v9 refiner, no TTA) | **0.40** (public) |
+
+## 2026-09-29 — v12 verdict: RF-DETR detector FAIL on fold 0 and unaffordable (runs/20260929-182900)
+
+**Run.** RF-DETR Medium at 896 px, 25 epochs, batch 1 x 16, on the T4: **148 min for the
+fold-0 detector** (5.9 min/epoch; YOLO11s: 23 min/fold), so the detector-phase budget
+stopped after one fold; refiner + sweep completed for fold 0 (2.9 h total).
+
+**Fold 0, identical 142 files, same refiner, best cut each:**
+
+| | PQ | SQ | RQ | TP / FP / FN | complete misses / TP | isolated FP / TP | near-miss FP / TP |
+|---|---|---|---|---|---|---|---|
+| v9 YOLO11s (cut 0.25) | **0.4361** | 0.682 | 0.640 | 1183 / 636 / 697 | 0.262 | 0.214 | 0.277 |
+| v9 YOLO11s (cut 0.30) | 0.4355 | 0.684 | 0.637 | 1126 / 529 / 754 | 0.362 | 0.171 | 0.261 |
+| v12 RF-DETR (cut 0.30) | 0.4200 | 0.680 | 0.617 | 1137 / 667 / 743 | 0.324 | **0.254** | 0.274 |
+| v12 RF-DETR (cut 0.40) | 0.4196 | 0.682 | 0.615 | 1021 / 420 / 859 | 0.534 | 0.131 | 0.245 |
+
+At equal TP (~1130) RF-DETR carries 138 more false objects; box P/R at conf 0.3 is
+P 0.575 / R 0.624 vs v9 P 0.66 / R 0.64. It does not find more of the contested filaments
+(fold-0 contested recall 0.36 / 0.52 / 0.65 by size vs v9's 0.35 / 0.52 / 0.58 pooled) and it
+fires more often on undrawn features: the RF100-VL small-object advantage did not transfer to
+"small AND annotator-defined". **-0.016 on one fold is outside the +-0.01 single-fold noise
+band but is still one fold; the cost settles it: 5 folds would need ~12.5 h of detector
+training alone, beyond the free budget, and more epochs are out of reach.** Verdict: FAIL
+under the free-compute constraint; would need paid GPU to test properly (not signed off).
+`DET_ARCH` reverts to "yolo"; the RF-DETR path stays in src behind the switch.
+
+**Lever ledger, final:** labels (3 variants), hard negatives, objectness, resolution (3),
+capacity, rescoring (4 kinds), persistence (2 baselines), views, detector architecture -
+all flat or negative against v9. The cascade at 0.449 OOF / fused 0.40 LB is the entry.
 
 ## 2026-09-29 — where we sit: research survey + error decomposition against a human baseline
 

@@ -113,7 +113,7 @@ if DEBUG:
 # PIPELINE selects the recipe: "semantic" = v1-v4 (U-Net prob map -> components);
 # "cascade" = YOLO box detector -> per-box crop refiner -> one mask per detection.
 PIPELINE = "cascade"
-DET_ARCH = "rfdetr"         # v12: "rfdetr" (query-based, no NMS, DINOv2 backbone; RF100-VL small-object AP
+DET_ARCH = "yolo"           # v12 tried "rfdetr" (FAIL fold 0: 0.420 vs 0.436; 148 min/fold on a T4). "rfdetr" (query-based, no NMS, DINOv2 backbone; RF100-VL small-object AP
                             # 35.8 vs YOLO11's 7.3) | "yolo" (v5-v11). Same union labels, folds, refiner.
 RFDETR_SIZE = "medium"      # nano | small | medium | base (Apache-2.0 variants)
 RFDETR_RES = 896            # must be divisible by patch 16 x 2 windows = 32 (and 64 for square resize);
