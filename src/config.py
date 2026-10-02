@@ -138,6 +138,13 @@ DET_LABEL_RECORD = "union"  # YOLO labels are static files. "medoid": the consen
                             # file's annotators (v6; the pooled metric rewards predicting a filament
                             # iff support > PQ / (2 SQ) ~ 0.32, see PORTING 2026-09-19)
 DET_LABEL_MIN_SUPPORT = 0.5
+DET_SUPPORT_CLASSES = True  # v13 lever (the "version 2" loss): label boxes carry an annotator-agreement class
+                            # (0: >= DET_SUPPORT_BINS[0] of the file's annotators incl. single-annotator files;
+                            # 1: >= DET_SUPPORT_BINS[1]; 2: minority - included, not dropped) so the detector's
+                            # classification loss has to separate agreement levels; at inference the predicted
+                            # class scales the confidence by DET_CLASS_WEIGHTS (agnostic NMS). Off = v5-v12.
+DET_SUPPORT_BINS = (0.66, 0.5)
+DET_CLASS_WEIGHTS = (1.0, 0.75, 0.5)   # expected-agreement multipliers for classes 0 / 1 / 2
 DET_EXTRA_VIEWS = 0         # v11 lever (FAIL, -0.011): archive views per TRAIN-fold file added to the detector's
                             # training list (val = the labelled frames only). 0 = off (v5-v10);
                             # N > 0 = up to N views per file from data/sequences_long/<stem>/ or the

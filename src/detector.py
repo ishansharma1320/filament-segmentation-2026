@@ -19,7 +19,7 @@ from pycocotools import mask as mask_util
 
 from config import (CACHE, DET_ARCH, DET_BATCH, DET_CONF_MIN, DET_EPOCHS, DET_EXTRA_VIEWS, DET_FUSE_IOU,
                     DET_IMGSZ, DET_LABEL_MIN_SUPPORT, DET_LABEL_RECORD, DET_MAX_DET, DET_MODEL, DET_NMS_IOU,
-                    DET_SOURCE, DET_VIEWS_MAX_DT_H, H, REPO, RFDETR_BATCH, RFDETR_EPOCHS, RFDETR_EVAL_INTERVAL,
+                    DET_SOURCE, DET_SUPPORT_BINS, DET_SUPPORT_CLASSES, DET_CLASS_WEIGHTS, DET_VIEWS_MAX_DT_H, H, REPO, RFDETR_BATCH, RFDETR_EPOCHS, RFDETR_EVAL_INTERVAL,
                     RFDETR_ACCELERATOR, RFDETR_EXPANDED_SCALES, RFDETR_GRAD_ACCUM, RFDETR_LR, RFDETR_RES,
                     RFDETR_SIZE, SEED, W, WORKERS, log)
 from data import test_files, test_img_dir, train_files, train_img_dir
@@ -187,7 +187,7 @@ def box_of_rle(rle) -> tuple[float, float, float, float]:
 
 
 def union_boxes(rles_by_record: list[list], min_support: float = DET_LABEL_MIN_SUPPORT,
-                iou_thr: float = 0.5) -> list[tuple[float, float, float, float]]:
+                iou_thr: float = 0.5, with_support: bool = False):
     """Filaments of all annotator records of one file, deduplicated across records.
     Greedy clustering: a filament joins the first cluster that holds no mask of its own record
     yet and holds a mask of another record with IoU > iou_thr (one filament per record per
@@ -211,14 +211,29 @@ def union_boxes(rles_by_record: list[list], min_support: float = DET_LABEL_MIN_S
                 clusters.append([(r, rle)])
     out = []
     for cl in clusters:
-        if len({k for k, _ in cl}) / n < min_support:
+        support = len({k for k, _ in cl}) / n
+        if support < min_support:
             continue
         if len(cl) == 1:
-            out.append(box_of_rle(cl[0][1])); continue
-        ms = [m for _, m in cl]
-        tot = np.asarray(mask_util.iou(ms, ms, [0] * len(ms))).sum(1)
-        out.append(box_of_rle(ms[int(tot.argmax())]))
+            box = box_of_rle(cl[0][1])
+        else:
+            ms = [m for _, m in cl]
+            tot = np.asarray(mask_util.iou(ms, ms, [0] * len(ms))).sum(1)
+            box = box_of_rle(ms[int(tot.argmax())])
+        out.append((box, support) if with_support else box)
     return out
+
+
+def support_class(support: float) -> int:
+    """Annotator-agreement class of a label box: 0 = drawn by >= DET_SUPPORT_BINS[0] of the file's
+    annotators (incl. every box of a single-annotator file), 1 = at least DET_SUPPORT_BINS[1],
+    2 = fewer (a minority). The detector learns to predict it; at inference the class scales the
+    confidence by DET_CLASS_WEIGHTS - the v13 'agreement-weighted' lever."""
+    if support >= DET_SUPPORT_BINS[0]:
+        return 0
+    if support >= DET_SUPPORT_BINS[1]:
+        return 1
+    return 2
 
 
 def build_yolo_labels(meta: dict, gt_rles: dict) -> Path:
@@ -229,7 +244,7 @@ def build_yolo_labels(meta: dict, gt_rles: dict) -> Path:
     (root / "images").mkdir(parents=True, exist_ok=True)
     (root / "labels").mkdir(exist_ok=True)
     (root / "labels.cache").unlink(missing_ok=True)   # ultralytics' scan cache of the old labels
-    n_box, n_files, n_views, support_hist = 0, 0, 0, {}
+    n_box, n_files, n_views, support_hist, class_hist = 0, 0, 0, {}, {}
     for f in train_files():
         stem = f.rsplit(".", 1)[0]
         src = image_source(f, S)
@@ -237,17 +252,25 @@ def build_yolo_labels(meta: dict, gt_rles: dict) -> Path:
         if not dst.exists():
             os.symlink(src.resolve(), dst)
         rids = meta["records_by_file"][f]
-        if DET_LABEL_RECORD == "union":
+        if DET_LABEL_RECORD == "union" and DET_SUPPORT_CLASSES:
+            # every cluster, including minority ones, each with its agreement class
+            pairs = union_boxes([gt_rles[r] for r in rids], min_support=0.0, with_support=True)
+            boxes = [b for b, _ in pairs]
+            classes = [support_class(s) for _, s in pairs]
+        elif DET_LABEL_RECORD == "union":
             boxes = union_boxes([gt_rles[r] for r in rids])
+            classes = [0] * len(boxes)
         else:
             rid = meta["medoid"][f] if DET_LABEL_RECORD == "medoid" else rids[0]
             boxes = [box_of_rle(rle) for rle in gt_rles[rid]]
+            classes = [0] * len(boxes)
         LABEL_BOXES[f] = [(x, y, w, h) for x, y, w, h in boxes if w >= 1 and h >= 1]   # native xywh, reused by RF-DETR
         lines = []
-        for x, y, w, h in boxes:
+        for (x, y, w, h), c in zip(boxes, classes):
             if w < 1 or h < 1:
                 continue
-            lines.append(f"0 {(x + w / 2) / W:.6f} {(y + h / 2) / H:.6f} {w / W:.6f} {h / H:.6f}")
+            class_hist[c] = class_hist.get(c, 0) + 1
+            lines.append(f"{c} {(x + w / 2) / W:.6f} {(y + h / 2) / H:.6f} {w / W:.6f} {h / H:.6f}")
         label_txt = "\n".join(lines) + ("\n" if lines else "")
         (root / "labels" / f"{stem}.txt").write_text(label_txt)
         n_box += len(lines); n_files += 1
@@ -267,7 +290,8 @@ def build_yolo_labels(meta: dict, gt_rles: dict) -> Path:
                 n_views += 1
     log(f"YOLO labels ({DET_LABEL_RECORD}): {n_box} boxes over {n_files} files "
         f"({n_box / max(n_files, 1):.2f}/file); boxes by n_annotators {support_hist}"
-        + (f"; extra views {n_views} ({n_views / max(n_files, 1):.1f}/file)" if DET_EXTRA_VIEWS else ""))
+        + (f"; extra views {n_views} ({n_views / max(n_files, 1):.1f}/file)" if DET_EXTRA_VIEWS else "")
+        + (f"; agreement classes {dict(sorted(class_hist.items()))} (0 high / 1 half / 2 minority)" if DET_SUPPORT_CLASSES else ""))
     return root
 
 
@@ -289,7 +313,8 @@ def fold_yaml(fold: int, meta: dict, train_limit: int = 0, val_limit: int = 0) -
     (root / f"fold{fold}_val.txt").write_text(paths(va))
     y = root / f"fold{fold}.yaml"
     y.write_text(f"path: {root}\ntrain: {root / f'fold{fold}_train.txt'}\nval: {root / f'fold{fold}_val.txt'}\n"
-                 f"names:\n  0: filament\n")
+                 + ("names:\n  0: filament_high\n  1: filament_half\n  2: filament_minority\n" if DET_SUPPORT_CLASSES
+                    else "names:\n  0: filament\n"))
     return y
 
 
@@ -310,7 +335,7 @@ def train_detector(fold: int, meta: dict, out_dir: Path, epochs: int = DET_EPOCH
     model = YOLO(DET_MODEL)
     model.train(data=str(yaml), epochs=epochs, imgsz=DET_IMGSZ, batch=DET_BATCH, workers=WORKERS,
                 seed=SEED, deterministic=False, project=str(out_dir / "yolo"), name=f"fold{fold}",
-                exist_ok=True, plots=False, verbose=False, device=_device_arg(), single_cls=True,
+                exist_ok=True, plots=False, verbose=False, device=_device_arg(), single_cls=not DET_SUPPORT_CLASSES,
                 flipud=0.5, fliplr=0.5, patience=epochs, save_period=-1, val=True)
     best = out_dir / "yolo" / f"fold{fold}" / "weights" / "best.pt"
     if not best.exists():
@@ -341,13 +366,17 @@ def predict_boxes(weights, files: list[str], size: int, split: str = "train",
     out = {}
     for i in range(0, len(paths), 16):
         res = model.predict(source=paths[i:i + 16], imgsz=DET_IMGSZ, conf=conf, iou=nms_iou,
-                            max_det=DET_MAX_DET, verbose=False, device=_device_arg(), augment=augment)
+                            max_det=DET_MAX_DET, verbose=False, device=_device_arg(), augment=augment,
+                            agnostic_nms=DET_SUPPORT_CLASSES)
         for f, r in zip(files[i:i + 16], res):
             if r.boxes is None or len(r.boxes) == 0:
                 out[f] = np.zeros((0, 5), np.float32)
                 continue
             xyxy = r.boxes.xyxy.float().cpu().numpy() * scale
             c = r.boxes.conf.float().cpu().numpy()
+            if DET_SUPPORT_CLASSES:   # agreement class scales the score: expected "would annotators draw it"
+                cls = r.boxes.cls.int().cpu().numpy()
+                c = c * np.asarray(DET_CLASS_WEIGHTS, np.float32)[np.clip(cls, 0, len(DET_CLASS_WEIGHTS) - 1)]
             b = np.concatenate([xyxy, c[:, None]], 1).astype(np.float32)
             out[f] = b[np.argsort(-b[:, 4])]
     return out
