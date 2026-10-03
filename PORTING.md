@@ -82,8 +82,29 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v10 | 2026-09-28 | Detector capacity: YOLO11s -> **YOLO11m** (batch 8 -> 4 for the T4), everything else = v9 (imgsz 1280 native, union labels, 40 epochs, v6 refiner). Judged on OOF PQ and box recall on contested filaments | 0.4406 (conf 0.3 / thr 0.6 / min_area 100) | not submitted (WASH) |
 | v11 | 2026-09-28 | **Archive views for the detector**: v9 base (YOLO11s @1280 native, union labels) + up to 8 LUT-matched views per train file (other competition sites at the same minute, ECC-aligned; same site <= 1.5 h, labels rotated) = ~1,730 extra training images; DET_EPOCHS 40 -> 15 (~3.4x data). Dataset gong-halpha-train-views-long attached. Refiner = v6 | 0.4341 (conf 0.3 / thr 0.6) | not submitted (FAIL) |
 | v12 (v13 kernel) | 2026-09-29 | **Detector = RF-DETR Medium** (rfdetr 1.11, Apache-2.0; COCO-pretrained, DINOv2 windowed backbone, no NMS). Kernel v12 at 1024 px + expanded multi-scale (train sizes up to 1184), batch 2: **CUDA OOM on the T4 in the first steps** (crash guard held). Re-pushed at 896 px, normal multi-scale (800-1024), batch 1 x accum 16, expandable CUDA segments; 25 epochs, lr 1e-4, on the native JPEGs; same union labels, folds, v6 refiner. Box floor 0.05; sweep conf 0.1-0.6 at thr 0.6 / min_area 100. Judged on OOF PQ + complete misses per TP (v9 0.383, human 0.331) + contested recall | **fold 0 only: 0.4200 vs v9 fold 0 0.4361** (detector 148 min/fold -> budget stopped after 1 fold) | not submitted (FAIL) |
-| v13 (kernel v14) | 2026-10-02 | **Agreement-weighted detector ("version 2" loss)**: union labels now keep every cluster incl. minority ones (6,448 boxes vs 5,421) and carry an annotator-agreement class (high 4,552 / half 869 / minority 1,027); YOLO11s trained 3-class (classification loss must separate agreement), agnostic NMS, score = conf x {1.0, 0.75, 0.5} by predicted class; sweep on that score. Everything else = v9 | pending | pending |
+| v13 (kernel v14) | 2026-10-02 | **Agreement-weighted detector ("version 2" loss)**: union labels now keep every cluster incl. minority ones (6,448 boxes vs 5,421) and carry an annotator-agreement class (high 4,552 / half 869 / minority 1,027); YOLO11s trained 3-class (classification loss must separate agreement), agnostic NMS, score = conf x {1.0, 0.75, 0.5} by predicted class; sweep on that score. Everything else = v9 | **0.4498** (cut 0.25; in-kernel 0.4490 at 0.2) vs v9 0.4454 at its best cut: **+0.004** | pending |
 | fused v5-v9 | 2026-09-20 | No kernel run: the 25 pulled fold detectors (v5-v9) fused by WBF on the test images, v9's 5 refiners with flip TTA, cut 0.25 / thr 0.5 / min_area 100 (`scripts/fuse_runs_test.py`, CPU) | **0.4485** (5-run fusion on OOF, v9 refiner, no TTA) | **0.40** (public) |
+
+## 2026-10-03 — v13 verdict: agreement-weighted detector, small PASS (+0.004), the first positive since v5 (runs/20261002-204530)
+
+4.3 h on the T4 (same cost as v9). Box P/R at conf 0.3 per fold: P 0.67-0.72 / R 0.58-0.62
+(v9 pooled 0.66 / 0.64): the weighted score is more precise and recalls less at the same
+nominal cut, i.e. the scale moved - compare at best cuts, pooled 5-fold OOF, same refiner:
+
+| | best cut | PQ | SQ | RQ | TP / FP / FN | complete misses / TP | isolated FP / TP |
+|---|---|---|---|---|---|---|---|
+| v9 conf | 0.25 | 0.4454 | 0.685 | 0.650 | 5225 / 2658 / 2974 | 0.291 | 0.220 |
+| v13 conf x class weight | 0.25 | **0.4498** | 0.689 | 0.653 | 5096 / 2317 / 3103 | 0.351 | 0.189 |
+| v13 | 0.20 | 0.4490 | 0.687 | 0.653 | 5375 / 2883 / 2824 | 0.255 | 0.246 |
+
++0.004 pooled over all 1,154 records - inside the +-0.01 single-fold band but this is the
+full OOF, and it matches the published size of agreement-weighting gains (+0.5-1.8 AP on
+VinDr-CXR). The ranking improved: at matched TP (~5,100-5,200) v13 carries ~300 fewer false
+objects; at matched FP (~2,900) it finds ~150 more filaments (cut 0.2 vs v9 0.25). Reading:
+telling the detector which filaments were drawn by a minority, instead of hiding them, and
+scoring by expected agreement is worth a little, exactly as the decision theory said.
+**Adopt as the incumbent detector recipe (DET_SUPPORT_CLASSES stays on).** Next free step:
+add the 5 v13 detectors to the test-time fusion (locally available runs: v9, v10, v11, v13).
 
 ## 2026-09-29 — v12 verdict: RF-DETR detector FAIL on fold 0 and unaffordable (runs/20260929-182900)
 
