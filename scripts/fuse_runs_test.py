@@ -14,7 +14,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import cascade  # noqa: E402
-from config import CACHE, DET_CONF_MIN, DET_MAX_DET, DET_NMS_IOU, H  # noqa: E402
+from config import CACHE, DET_CLASS_WEIGHTS, DET_CONF_MIN, DET_MAX_DET, DET_NMS_IOU, DET_SUPPORT_CLASSES, H  # noqa: E402
 from data import test_files, test_img_dir  # noqa: E402
 from dataset import load_meta  # noqa: E402
 from detector import fuse_boxes  # noqa: E402
@@ -29,12 +29,15 @@ def predict(model, files, imgsz, source, size):
     out = {}
     for i in range(0, len(paths), 8):
         res = model.predict(source=paths[i:i + 8], imgsz=imgsz, conf=DET_CONF_MIN, iou=DET_NMS_IOU,
-                            max_det=DET_MAX_DET, verbose=False, device="cpu")
+                            max_det=DET_MAX_DET, verbose=False, device="cpu", agnostic_nms=DET_SUPPORT_CLASSES)
         for f, r in zip(files[i:i + 8], res):
             if r.boxes is None or len(r.boxes) == 0:
                 out[f] = np.zeros((0, 5), np.float32); continue
-            b = np.concatenate([r.boxes.xyxy.float().cpu().numpy() * scale,
-                                r.boxes.conf.float().cpu().numpy()[:, None]], 1).astype(np.float32)
+            c = r.boxes.conf.float().cpu().numpy()
+            if DET_SUPPORT_CLASSES:   # same scoring as detector.predict_boxes: conf x agreement-class weight
+                cls = r.boxes.cls.int().cpu().numpy()
+                c = c * np.asarray(DET_CLASS_WEIGHTS, np.float32)[np.clip(cls, 0, len(DET_CLASS_WEIGHTS) - 1)]
+            b = np.concatenate([r.boxes.xyxy.float().cpu().numpy() * scale, c[:, None]], 1).astype(np.float32)
             out[f] = b[np.argsort(-b[:, 4])]
     return out
 

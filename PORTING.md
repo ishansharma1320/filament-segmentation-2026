@@ -85,6 +85,24 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v13 (kernel v14) | 2026-10-02 | **Agreement-weighted detector ("version 2" loss)**: union labels now keep every cluster incl. minority ones (6,448 boxes vs 5,421) and carry an annotator-agreement class (high 4,552 / half 869 / minority 1,027); YOLO11s trained 3-class (classification loss must separate agreement), agnostic NMS, score = conf x {1.0, 0.75, 0.5} by predicted class; sweep on that score. Everything else = v9 | **0.4498** (cut 0.25; in-kernel 0.4490 at 0.2) vs v9 0.4454 at its best cut: **+0.004** | pending |
 | fused v5-v9 | 2026-09-20 | No kernel run: the 25 pulled fold detectors (v5-v9) fused by WBF on the test images, v9's 5 refiners with flip TTA, cut 0.25 / thr 0.5 / min_area 100 (`scripts/fuse_runs_test.py`, CPU) | **0.4485** (5-run fusion on OOF, v9 refiner, no TTA) | **0.40** (public) |
 
+## 2026-10-03 — fusion with v13: OOF 0.4513, new best (local, no kernel run)
+
+`scripts/fuse_runs_oof.py`, v13 refiner, WBF over the fold detectors' saved OOF boxes:
+
+| detectors fused | best cut | OOF PQ | box P / R at conf 0.3 |
+|---|---|---|---|
+| v13 alone | 0.25 | 0.4482 | 0.700 / 0.600 |
+| v9 + v13 (10) | 0.25 | 0.4503 | 0.691 / 0.623 |
+| v9 + v10 + v11 + v13 (20) | 0.25 | **0.4513** | 0.693 / 0.620 |
+| (previous LB entry: v5-v9 fused, 25) | 0.25 | 0.4485 | – |
+
++0.003 over v13 alone and over the standing entry; the "wash" runs v10 and v11 pay as
+ensemble members. v5-v8 weights live only in the cloud environment (Kaggle serves the
+latest kernel output only), so the local pool is these four runs. Test submission built by
+`scripts/fuse_runs_test.py` (patched to score v13 boxes exactly as the detector module does:
+agnostic NMS, conf x agreement-class weight), cut 0.25 / thr 0.6 / min_area 100, v13
+refiners with flip TTA -> `runs/fused-v9-v13/submission_fused.csv`. Expected LB: ~0.40-0.41.
+
 ## 2026-10-03 — v13 verdict: agreement-weighted detector, small PASS (+0.004), the first positive since v5 (runs/20261002-204530)
 
 4.3 h on the T4 (same cost as v9). Box P/R at conf 0.3 per fold: P 0.67-0.72 / R 0.58-0.62
