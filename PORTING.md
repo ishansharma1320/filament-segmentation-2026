@@ -83,6 +83,7 @@ the assembled notebook executed cell-by-cell in one namespace under `FILAMENT_DE
 | v11 | 2026-09-28 | **Archive views for the detector**: v9 base (YOLO11s @1280 native, union labels) + up to 8 LUT-matched views per train file (other competition sites at the same minute, ECC-aligned; same site <= 1.5 h, labels rotated) = ~1,730 extra training images; DET_EPOCHS 40 -> 15 (~3.4x data). Dataset gong-halpha-train-views-long attached. Refiner = v6 | 0.4341 (conf 0.3 / thr 0.6) | not submitted (FAIL) |
 | v12 (v13 kernel) | 2026-09-29 | **Detector = RF-DETR Medium** (rfdetr 1.11, Apache-2.0; COCO-pretrained, DINOv2 windowed backbone, no NMS). Kernel v12 at 1024 px + expanded multi-scale (train sizes up to 1184), batch 2: **CUDA OOM on the T4 in the first steps** (crash guard held). Re-pushed at 896 px, normal multi-scale (800-1024), batch 1 x accum 16, expandable CUDA segments; 25 epochs, lr 1e-4, on the native JPEGs; same union labels, folds, v6 refiner. Box floor 0.05; sweep conf 0.1-0.6 at thr 0.6 / min_area 100. Judged on OOF PQ + complete misses per TP (v9 0.383, human 0.331) + contested recall | **fold 0 only: 0.4200 vs v9 fold 0 0.4361** (detector 148 min/fold -> budget stopped after 1 fold) | not submitted (FAIL) |
 | v13 (kernel v14) | 2026-10-02 | **Agreement-weighted detector ("version 2" loss)**: union labels now keep every cluster incl. minority ones (6,448 boxes vs 5,421) and carry an annotator-agreement class (high 4,552 / half 869 / minority 1,027); YOLO11s trained 3-class (classification loss must separate agreement), agnostic NMS, score = conf x {1.0, 0.75, 0.5} by predicted class; sweep on that score. Everything else = v9 | **0.4498** (cut 0.25; in-kernel 0.4490 at 0.2) vs v9 0.4454 at its best cut: **+0.004** | pending |
+| fused v9+v10+v11+v13 | 2026-10-05 | No kernel run: 20 fold detectors (v9, v10, v11, v13) WBF on the test images, v13 refiners with flip TTA, cut 0.25 / thr 0.6 / min_area 100 (`scripts/fuse_runs_test.py`, laptop CPU) | **0.4513** | **0.40** (= previous entry at 2 dp; OOF +0.003 -> LB +0.003, below the display precision) |
 | fused v5-v9 | 2026-09-20 | No kernel run: the 25 pulled fold detectors (v5-v9) fused by WBF on the test images, v9's 5 refiners with flip TTA, cut 0.25 / thr 0.5 / min_area 100 (`scripts/fuse_runs_test.py`, CPU) | **0.4485** (5-run fusion on OOF, v9 refiner, no TTA) | **0.40** (public) |
 
 ## 2026-10-03 — fusion with v13: OOF 0.4513, new best (local, no kernel run)
@@ -101,7 +102,7 @@ ensemble members. v5-v8 weights live only in the cloud environment (Kaggle serve
 latest kernel output only), so the local pool is these four runs. Test submission built by
 `scripts/fuse_runs_test.py` (patched to score v13 boxes exactly as the detector module does:
 agnostic NMS, conf x agreement-class weight), cut 0.25 / thr 0.6 / min_area 100, v13
-refiners with flip TTA -> `runs/fused-v9-v13/submission_fused.csv`. Expected LB: ~0.40-0.41.
+refiners with flip TTA -> `runs/fused-v9-v13/submission_fused.csv`. Expected LB: ~0.40-0.41. **LB: 0.40** (1,218 rows); the +0.003 OOF gain is below the leaderboard's 2-decimal display. OOF->LB offset holds at ~0.05.
 
 ## 2026-10-03 — v13 verdict: agreement-weighted detector, small PASS (+0.004), the first positive since v5 (runs/20261002-204530)
 
