@@ -19,7 +19,8 @@ from pycocotools import mask as mask_util
 
 from config import (CACHE, DET_ARCH, DET_BATCH, DET_CONF_MIN, DET_EPOCHS, DET_EXTRA_VIEWS, DET_FUSE_IOU,
                     DET_IMGSZ, DET_LABEL_MIN_SUPPORT, DET_LABEL_RECORD, DET_MAX_DET, DET_MODEL, DET_NMS_IOU,
-                    DET_PSEUDO_VIEWS, DET_SOURCE, DET_SUPPORT_BINS, DET_SUPPORT_CLASSES, DET_CLASS_WEIGHTS,
+                    DET_COPY_PASTE, DET_COPY_PASTE_MODE, DET_LABEL_SEGMENTS, DET_PSEUDO_VIEWS, DET_SOURCE,
+                    DET_SUPPORT_BINS, DET_SUPPORT_CLASSES, DET_CLASS_WEIGHTS,
                     DET_VIEWS_MAX_DT_H, H, PSEUDO_BINS, PSEUDO_DETECTORS, PSEUDO_MIN_SCORE, REPO, RFDETR_BATCH, RFDETR_EPOCHS, RFDETR_EVAL_INTERVAL,
                     RFDETR_ACCELERATOR, RFDETR_EXPANDED_SCALES, RFDETR_GRAD_ACCUM, RFDETR_LR, RFDETR_RES,
                     RFDETR_SIZE, SEED, W, WORKERS, log)
@@ -303,13 +304,28 @@ def union_boxes(rles_by_record: list[list], min_support: float = DET_LABEL_MIN_S
         if support < min_support:
             continue
         if len(cl) == 1:
-            box = box_of_rle(cl[0][1])
+            rep = cl[0][1]
         else:
             ms = [m for _, m in cl]
             tot = np.asarray(mask_util.iou(ms, ms, [0] * len(ms))).sum(1)
-            box = box_of_rle(ms[int(tot.argmax())])
-        out.append((box, support) if with_support else box)
+            rep = ms[int(tot.argmax())]
+        box = box_of_rle(rep)
+        out.append((box, support, rep) if with_support else box)
     return out
+
+
+def rle_polygon(rle, eps: float = 1.5) -> list[float]:
+    """Largest outer contour of a mask as a flat [x1, y1, x2, y2, ...] polygon in native px
+    (simplified with Douglas-Peucker at `eps`); falls back to the box corners."""
+    m = mask_util.decode(rle).astype(np.uint8)
+    cs, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if cs:
+        c = max(cs, key=cv2.contourArea)
+        c = cv2.approxPolyDP(c, eps, True).reshape(-1, 2)
+        if len(c) >= 3:
+            return [float(v) for v in c.ravel()]
+    x, y, w, h = box_of_rle(rle)
+    return [x, y, x + w, y, x + w, y + h, x, y + h]
 
 
 def support_class(support: float) -> int:
@@ -343,22 +359,27 @@ def build_yolo_labels(meta: dict, gt_rles: dict) -> Path:
         if DET_LABEL_RECORD == "union" and DET_SUPPORT_CLASSES:
             # every cluster, including minority ones, each with its agreement class
             pairs = union_boxes([gt_rles[r] for r in rids], min_support=0.0, with_support=True)
-            boxes = [b for b, _ in pairs]
-            classes = [support_class(s) for _, s in pairs]
+            boxes = [b for b, _, _ in pairs]
+            classes = [support_class(s) for _, s, _ in pairs]
+            polys = [rle_polygon(r) for _, _, r in pairs] if DET_LABEL_SEGMENTS else None
         elif DET_LABEL_RECORD == "union":
             boxes = union_boxes([gt_rles[r] for r in rids])
-            classes = [0] * len(boxes)
+            classes = [0] * len(boxes); polys = None
         else:
             rid = meta["medoid"][f] if DET_LABEL_RECORD == "medoid" else rids[0]
             boxes = [box_of_rle(rle) for rle in gt_rles[rid]]
-            classes = [0] * len(boxes)
+            classes = [0] * len(boxes); polys = None
         LABEL_BOXES[f] = [(x, y, w, h) for x, y, w, h in boxes if w >= 1 and h >= 1]   # native xywh, reused by RF-DETR
         lines = []
-        for (x, y, w, h), c in zip(boxes, classes):
+        for i, ((x, y, w, h), c) in enumerate(zip(boxes, classes)):
             if w < 1 or h < 1:
                 continue
             class_hist[c] = class_hist.get(c, 0) + 1
-            lines.append(f"{c} {(x + w / 2) / W:.6f} {(y + h / 2) / H:.6f} {w / W:.6f} {h / H:.6f}")
+            if polys is not None:   # segment format: class + normalised polygon (copy-paste needs outlines)
+                pts = polys[i]
+                lines.append(f"{c} " + " ".join(f"{pts[j] / W:.6f} {pts[j + 1] / H:.6f}" for j in range(0, len(pts), 2)))
+            else:
+                lines.append(f"{c} {(x + w / 2) / W:.6f} {(y + h / 2) / H:.6f} {w / W:.6f} {h / H:.6f}")
         label_txt = "\n".join(lines) + ("\n" if lines else "")
         (root / "labels" / f"{stem}.txt").write_text(label_txt)
         n_box += len(lines); n_files += 1
@@ -429,7 +450,8 @@ def train_detector(fold: int, meta: dict, out_dir: Path, epochs: int = DET_EPOCH
     model.train(data=str(yaml), epochs=epochs, imgsz=DET_IMGSZ, batch=DET_BATCH, workers=WORKERS,
                 seed=SEED, deterministic=False, project=str(out_dir / "yolo"), name=f"fold{fold}",
                 exist_ok=True, plots=False, verbose=False, device=_device_arg(), single_cls=not DET_SUPPORT_CLASSES,
-                flipud=0.5, fliplr=0.5, patience=epochs, save_period=-1, val=True)
+                flipud=0.5, fliplr=0.5, patience=epochs, save_period=-1, val=True,
+                copy_paste=DET_COPY_PASTE, copy_paste_mode=DET_COPY_PASTE_MODE)
     best = out_dir / "yolo" / f"fold{fold}" / "weights" / "best.pt"
     if not best.exists():
         best = out_dir / "yolo" / f"fold{fold}" / "weights" / "last.pt"
