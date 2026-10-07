@@ -19,7 +19,8 @@ from pycocotools import mask as mask_util
 
 from config import (CACHE, DET_ARCH, DET_BATCH, DET_CONF_MIN, DET_EPOCHS, DET_EXTRA_VIEWS, DET_FUSE_IOU,
                     DET_IMGSZ, DET_LABEL_MIN_SUPPORT, DET_LABEL_RECORD, DET_MAX_DET, DET_MODEL, DET_NMS_IOU,
-                    DET_SOURCE, DET_SUPPORT_BINS, DET_SUPPORT_CLASSES, DET_CLASS_WEIGHTS, DET_VIEWS_MAX_DT_H, H, REPO, RFDETR_BATCH, RFDETR_EPOCHS, RFDETR_EVAL_INTERVAL,
+                    DET_PSEUDO_VIEWS, DET_SOURCE, DET_SUPPORT_BINS, DET_SUPPORT_CLASSES, DET_CLASS_WEIGHTS,
+                    DET_VIEWS_MAX_DT_H, H, PSEUDO_BINS, PSEUDO_DETECTORS, PSEUDO_MIN_SCORE, REPO, RFDETR_BATCH, RFDETR_EPOCHS, RFDETR_EVAL_INTERVAL,
                     RFDETR_ACCELERATOR, RFDETR_EXPANDED_SCALES, RFDETR_GRAD_ACCUM, RFDETR_LR, RFDETR_RES,
                     RFDETR_SIZE, SEED, W, WORKERS, log)
 from data import test_files, test_img_dir, train_files, train_img_dir
@@ -125,6 +126,93 @@ def _predict_rfdetr(weights, files: list[str], split: str, conf: float, model=No
 
 
 VIEWS_DATASET = "gong-halpha-train-views-long"
+
+
+# --- v14: self-training views (pseudo-labelled by the fold-k ensemble) -----------------------
+def pseudo_detectors(fold: int) -> list[Path]:
+    """fold{k}_yolo.pt of every run in the detectors dataset (locally data/fold_detectors/<run>/)."""
+    roots = [REPO / "data" / "fold_detectors"]
+    kin = Path("/kaggle/input")
+    if kin.is_dir():
+        roots += [p for p in kin.glob(f"*/{PSEUDO_DETECTORS}")] + [p for p in kin.glob(f"*/*/{PSEUDO_DETECTORS}")] + \
+                 [kin / PSEUDO_DETECTORS]
+    for r in roots:
+        ws = sorted(set(r.glob(f"*/fold{fold}_yolo.pt")) | set(r.glob(f"*/*/fold{fold}_yolo.pt")))
+        if ws:
+            return ws
+    return []
+
+
+def _predict_paths(model, paths: list[str]) -> dict:
+    """{path: (n, 5) xyxy+score in the image's own px}, same scoring as predict_boxes."""
+    out = {}
+    for i in range(0, len(paths), 16):
+        res = model.predict(source=paths[i:i + 16], imgsz=DET_IMGSZ, conf=0.05, iou=DET_NMS_IOU,
+                            max_det=DET_MAX_DET, verbose=False, device=_device_arg(), agnostic_nms=DET_SUPPORT_CLASSES)
+        for p, r in zip(paths[i:i + 16], res):
+            if r.boxes is None or len(r.boxes) == 0:
+                out[p] = np.zeros((0, 5), np.float32); continue
+            c = r.boxes.conf.float().cpu().numpy()
+            if DET_SUPPORT_CLASSES:
+                cls = r.boxes.cls.int().cpu().numpy()
+                c = c * np.asarray(DET_CLASS_WEIGHTS, np.float32)[np.clip(cls, 0, len(DET_CLASS_WEIGHTS) - 1)]
+            out[p] = np.concatenate([r.boxes.xyxy.float().cpu().numpy(), c[:, None]], 1).astype(np.float32)
+    return out
+
+
+def build_pseudo_views(fold: int, meta: dict, train_limit: int = 0) -> Path:
+    """pv_f{fold}/images/<stem>__<view>.jpg (symlinks to LUT-matched views, materialised once in
+    views_lut/) + pv_f{fold}/labels/*.txt pseudo-labelled by the fold's detectors (WBF-fused, class by
+    fused score). Only views of the fold's TRAIN files."""
+    from ultralytics import YOLO
+    root = yolo_root()
+    pv = root / f"pv_f{fold}"
+    shutil.rmtree(pv, ignore_errors=True)
+    (pv / "images").mkdir(parents=True); (pv / "labels").mkdir()
+    lut_dir = root / "views_lut"; lut_dir.mkdir(exist_ok=True)
+    tr = sorted(f for f, k in meta["folds"].items() if k != fold)
+    if train_limit:
+        tr = tr[:train_limit]
+    paths = []
+    for f in tr:
+        stem = f.rsplit(".", 1)[0]
+        n = 0
+        for v in views_of(stem):
+            if n >= DET_PSEUDO_VIEWS or v.stem[14] not in COMPETITION_SITES:
+                continue
+            dst = lut_dir / f"{stem}__{v.stem}.jpg"
+            if not dst.exists():
+                img = cv2.imread(str(v), cv2.IMREAD_GRAYSCALE)
+                if img is None or img.shape != (H, W):
+                    continue
+                cv2.imwrite(str(dst), make_view(img), [cv2.IMWRITE_JPEG_QUALITY, 95])
+            link = pv / "images" / dst.name
+            if not link.exists():
+                os.symlink(dst.resolve(), link)
+            paths.append(str(link)); n += 1
+    weights = pseudo_detectors(fold)
+    if not weights or not paths:
+        log(f"fold {fold}: pseudo views skipped (detectors {len(weights)}, views {len(paths)})")
+        return pv
+    sets = []
+    for w in weights:
+        sets.append(_predict_paths(YOLO(str(w)), paths))
+    n_box, hist = 0, {}
+    for p in paths:
+        fused = fuse_boxes([s[p] for s in sets])
+        fused = fused[fused[:, 4] >= PSEUDO_MIN_SCORE] if len(fused) else fused
+        lines = []
+        for x0, y0, x1, y1, s in fused:
+            c = 0 if s >= PSEUDO_BINS[0] else 1 if s >= PSEUDO_BINS[1] else 2
+            if not DET_SUPPORT_CLASSES:
+                c = 0
+            hist[c] = hist.get(c, 0) + 1
+            lines.append(f"{c} {(x0 + x1) / 2 / W:.6f} {(y0 + y1) / 2 / H:.6f} {(x1 - x0) / W:.6f} {(y1 - y0) / H:.6f}")
+        n_box += len(lines)
+        (pv / "labels" / (Path(p).stem + ".txt")).write_text("\n".join(lines) + ("\n" if lines else ""))
+    log(f"fold {fold}: pseudo views {len(paths)} ({len(paths) / max(len(tr), 1):.1f}/file) labelled by {len(weights)} "
+        f"detectors: {n_box} boxes ({n_box / max(len(paths), 1):.1f}/view), classes {dict(sorted(hist.items()))}")
+    return pv
 
 
 def views_of(stem: str) -> list[Path]:
@@ -309,6 +397,9 @@ def fold_yaml(fold: int, meta: dict, train_limit: int = 0, val_limit: int = 0) -
     if DET_EXTRA_VIEWS > 0:   # views of TRAIN-fold files only; validation stays the labelled frames
         extra = [p for f in tr for p in sorted((root / "images").glob(f"{f.rsplit('.', 1)[0]}__*{ext}"))]
         train_txt += "\n".join(str(p) for p in extra) + ("\n" if extra else "")
+    if DET_PSEUDO_VIEWS > 0:  # self-training views of this fold (built by build_pseudo_views)
+        pvs = sorted((root / f"pv_f{fold}" / "images").glob("*.jpg"))
+        train_txt += "\n".join(str(p) for p in pvs) + ("\n" if pvs else "")
     (root / f"fold{fold}_train.txt").write_text(train_txt)
     (root / f"fold{fold}_val.txt").write_text(paths(va))
     y = root / f"fold{fold}.yaml"
@@ -330,6 +421,8 @@ def train_detector(fold: int, meta: dict, out_dir: Path, epochs: int = DET_EPOCH
     from ultralytics import YOLO
     from ultralytics import settings as yolo_settings
     yolo_settings.update({"sync": False, "wandb": False, "mlflow": False, "tensorboard": False})
+    if DET_PSEUDO_VIEWS > 0:
+        build_pseudo_views(fold, meta, train_limit)
     yaml = fold_yaml(fold, meta, train_limit, val_limit)
     log(f"fold {fold}: YOLO {DET_MODEL} imgsz {DET_IMGSZ} epochs {epochs}")
     model = YOLO(DET_MODEL)

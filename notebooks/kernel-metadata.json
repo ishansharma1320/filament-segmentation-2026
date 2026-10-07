@@ -8,7 +8,10 @@
   "enable_gpu": "true",
   "machine_shape": "NvidiaTeslaT4",
   "enable_internet": "true",
-  "dataset_sources": [],
+  "dataset_sources": [
+    "ishansharma13/gong-halpha-train-views-long",
+    "ishansharma13/filament-fold-detectors"
+  ],
   "competition_sources": [
     "filament-segmentation-2026"
   ],

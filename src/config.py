@@ -130,7 +130,7 @@ DET_MODEL = "yolo11s.pt"    # v10 tried yolo11m: WASH (0.4406 vs 0.4449, contest
 DET_IMGSZ = 1280            # v5-v8: 1024 on the cached PNGs (no resize). v9: 1280 from the native
                             # 2048 JPEGs (small filaments: consensus recall 0.79 < 64 px vs 0.89)
 DET_SOURCE = "native"       # "cache": img{IMG_SIZE}.png (v5-v8) | "native": the 2048 JPEGs
-DET_EPOCHS = 40             # YOLO epochs (v11 used 15 with views)
+DET_EPOCHS = 12             # v14: ~4.7x images with pseudo views (v9: 40 on originals; v11: 15 with 3.4x)
 DET_BATCH = 8
 DET_LABEL_RECORD = "union"  # YOLO labels are static files. "medoid": the consensus record (v5).
                             # "union": every record's filaments, deduplicated across annotators at
@@ -153,6 +153,14 @@ DET_EXTRA_VIEWS = 0         # v11 lever (FAIL, -0.011): archive views per TRAIN-
                             # unchanged) and the same site within DET_VIEWS_MAX_DT_H hours (labels
                             # rotated). Views are LUT-matched to the competition processing
                             # (src/views.py). Host ruling: sequences at training time only.
+DET_PSEUDO_VIEWS = 3        # v14 lever (self-training): archive views per TRAIN-fold file labelled by the
+                            # ensemble itself - the fold-k detectors of PSEUDO_DETECTOR_RUNS (all trained
+                            # without fold k) predict on the raw LUT-matched view, boxes are WBF-fused, the fused
+                            # score sets the agreement class (PSEUDO_BINS). No projection, no alignment, no
+                            # leakage. 0 = off. Views: data/sequences_long locally / gong-halpha-train-views-long.
+PSEUDO_MIN_SCORE = 0.15     # fused score floor for a pseudo box
+PSEUDO_BINS = (0.5, 0.3)    # fused score >= .5 -> class 0 (high), >= .3 -> 1 (half), else 2 (minority)
+PSEUDO_DETECTORS = "filament-fold-detectors"   # Kaggle dataset of <run>/fold{k}_yolo.pt; locally data/fold_detectors
 DET_VIEWS_MAX_DT_H = 1.5    # same-site views beyond this are dropped: label fidelity vs the v9
                             # detector is 0.47 at 1 h, 0.39 at 3 h, 0.31 at 6 h (original frame 0.59)
 DET_CONF_MIN = 0.05         # v12: 0.05 (RF-DETR scores sit on a different scale than YOLO; v5-v11: 0.1)
@@ -163,7 +171,7 @@ DET_FUSE_IOU = 0.55         # test time: boxes of the fold detectors are fused (
 REF_CROP = 256              # refiner input side in native px; boxes whose context exceeds it
 REF_CONTEXT = 1.4           #   (REF_CONTEXT x long side) are downscaled, probs upscaled back
 REF_PAD = 0.25              # seed channel = detector box grown by this fraction per side
-REF_ENCODER = "resnet34"
+REF_ENCODER = "efficientnet-b3"   # v14: second encoder for ensemble diversity (v5-v13: resnet34; judged on val Dice / SQ)
 REF_EPOCHS = 12
 REF_BATCH = 16
 REF_LR = 3e-4
@@ -181,6 +189,7 @@ DUP_FRACTION = 0.5          # a refined mask with more than this fraction of its
                             # taken by a higher-confidence instance is a duplicate: dropped
 if DEBUG:
     DET_EPOCHS, DET_BATCH, REF_EPOCHS = 1, 4, 1
+    DET_PSEUDO_VIEWS = 2
     RFDETR_EPOCHS, RFDETR_RES, RFDETR_BATCH, RFDETR_GRAD_ACCUM, RFDETR_EVAL_INTERVAL = 1, 512, 2, 1, 1
     if not ON_KAGGLE:
         RFDETR_ACCELERATOR = "cpu"
