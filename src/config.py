@@ -144,10 +144,10 @@ DET_SUPPORT_CLASSES = True  # v13 lever (the "version 2" loss): label boxes carr
                             # classification loss has to separate agreement levels; at inference the predicted
                             # class scales the confidence by DET_CLASS_WEIGHTS (agnostic NMS). Off = v5-v12.
 DET_SUPPORT_BINS = (0.66, 0.5)
-DET_LABEL_SEGMENTS = True   # v15 lever: YOLO labels carry the consensus filament OUTLINE (polygon from the
+DET_LABEL_SEGMENTS = False  # v15 lever (WASH): YOLO labels carry the consensus filament OUTLINE (polygon from the
                             # representative mask) instead of a box, so ultralytics' copy-paste augmentation
                             # can paste real filaments onto other discs; the detector still trains on boxes.
-DET_COPY_PASTE = 0.5        # v15: ultralytics copy_paste probability (needs DET_LABEL_SEGMENTS)
+DET_COPY_PASTE = 0.0        # v15 (WASH, -0.002): ultralytics copy_paste probability (needs DET_LABEL_SEGMENTS)
 DET_COPY_PASTE_MODE = "flip"
 DET_CLASS_WEIGHTS = (1.0, 0.75, 0.5)   # expected-agreement multipliers for classes 0 / 1 / 2
 DET_EXTRA_VIEWS = 0         # v11 lever (FAIL, -0.011): archive views per TRAIN-fold file added to the detector's
