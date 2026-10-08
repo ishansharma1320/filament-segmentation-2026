@@ -97,8 +97,10 @@ per fold P 0.68-0.72 / R 0.57-0.63 (v13: 0.67-0.72 / 0.58-0.62). Pooled OOF at b
 0.351, isolated FP/TP 0.186 vs 0.189). The student learned what the teacher already knew.
 Refiner: EfficientNet-B3 val Dice 0.814 / 0.812 / 0.818 / 0.815 / 0.812 vs ResNet34 0.811 /
 0.812 / 0.818 / 0.815 / 0.813; SQ 0.688 vs 0.689. The mask ceiling is the annotators, not
-the encoder, confirmed a second way. **Verdicts: both WASH.** v14's 5 detectors remain
-candidates for the fusion pool (tested below); v15 (copy-paste) goes up on the v13 recipe.
+the encoder, confirmed a second way. **Verdicts: both WASH.** v14's 5 detectors add nothing to the
+fusion pool either: v9+v10+v11+v13+v14 fused = 0.4513 at cut 0.25, identical to the four-run
+fusion. The ensemble is saturated at ~20 detectors of this family. v15 (copy-paste) goes up
+on the v13 recipe.
 
 ## 2026-10-03 — fusion with v13: OOF 0.4513, new best (local, no kernel run)
 
