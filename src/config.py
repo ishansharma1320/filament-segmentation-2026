@@ -130,7 +130,7 @@ DET_MODEL = "yolo11s.pt"    # v10 tried yolo11m: WASH (0.4406 vs 0.4449, contest
 DET_IMGSZ = 1280            # v5-v8: 1024 on the cached PNGs (no resize). v9: 1280 from the native
                             # 2048 JPEGs (small filaments: consensus recall 0.79 < 64 px vs 0.89)
 DET_SOURCE = "native"       # "cache": img{IMG_SIZE}.png (v5-v8) | "native": the 2048 JPEGs
-DET_EPOCHS = 12             # v14: ~4.7x images with pseudo views (v9: 40 on originals; v11: 15 with 3.4x)
+DET_EPOCHS = 40             # YOLO epochs on the originals (v11/v14 used 15/12 with extra views)
 DET_BATCH = 8
 DET_LABEL_RECORD = "union"  # YOLO labels are static files. "medoid": the consensus record (v5).
                             # "union": every record's filaments, deduplicated across annotators at
@@ -144,10 +144,10 @@ DET_SUPPORT_CLASSES = True  # v13 lever (the "version 2" loss): label boxes carr
                             # classification loss has to separate agreement levels; at inference the predicted
                             # class scales the confidence by DET_CLASS_WEIGHTS (agnostic NMS). Off = v5-v12.
 DET_SUPPORT_BINS = (0.66, 0.5)
-DET_LABEL_SEGMENTS = False  # v15 lever: YOLO labels carry the consensus filament OUTLINE (polygon from the
+DET_LABEL_SEGMENTS = True   # v15 lever: YOLO labels carry the consensus filament OUTLINE (polygon from the
                             # representative mask) instead of a box, so ultralytics' copy-paste augmentation
                             # can paste real filaments onto other discs; the detector still trains on boxes.
-DET_COPY_PASTE = 0.0        # ultralytics copy_paste probability (v15: 0.5; needs DET_LABEL_SEGMENTS)
+DET_COPY_PASTE = 0.5        # v15: ultralytics copy_paste probability (needs DET_LABEL_SEGMENTS)
 DET_COPY_PASTE_MODE = "flip"
 DET_CLASS_WEIGHTS = (1.0, 0.75, 0.5)   # expected-agreement multipliers for classes 0 / 1 / 2
 DET_EXTRA_VIEWS = 0         # v11 lever (FAIL, -0.011): archive views per TRAIN-fold file added to the detector's
@@ -158,7 +158,7 @@ DET_EXTRA_VIEWS = 0         # v11 lever (FAIL, -0.011): archive views per TRAIN-
                             # unchanged) and the same site within DET_VIEWS_MAX_DT_H hours (labels
                             # rotated). Views are LUT-matched to the competition processing
                             # (src/views.py). Host ruling: sequences at training time only.
-DET_PSEUDO_VIEWS = 3        # v14 lever (self-training): archive views per TRAIN-fold file labelled by the
+DET_PSEUDO_VIEWS = 0        # v14 lever (WASH, -0.002) (self-training): archive views per TRAIN-fold file labelled by the
                             # ensemble itself - the fold-k detectors of PSEUDO_DETECTOR_RUNS (all trained
                             # without fold k) predict on the raw LUT-matched view, boxes are WBF-fused, the fused
                             # score sets the agreement class (PSEUDO_BINS). No projection, no alignment, no
@@ -176,7 +176,7 @@ DET_FUSE_IOU = 0.55         # test time: boxes of the fold detectors are fused (
 REF_CROP = 256              # refiner input side in native px; boxes whose context exceeds it
 REF_CONTEXT = 1.4           #   (REF_CONTEXT x long side) are downscaled, probs upscaled back
 REF_PAD = 0.25              # seed channel = detector box grown by this fraction per side
-REF_ENCODER = "efficientnet-b3"   # v14: second encoder for ensemble diversity (v5-v13: resnet34; judged on val Dice / SQ)
+REF_ENCODER = "resnet34"    # v14 tried efficientnet-b3: identical val Dice 0.814 and SQ (WASH)
 REF_EPOCHS = 12
 REF_BATCH = 16
 REF_LR = 3e-4
