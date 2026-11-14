@@ -1,4 +1,41 @@
-# Solar Filament Segmentation Challenge 2026
+# Solar Filament Segmentation Challenge 2026 — agreement-weighted detection + crop refinement
+
+Solution by **Ishan Sharma** to the [Solar Filament Segmentation Challenge 2026](https://www.kaggle.com/competitions/filament-segmentation-2026)
+(IEEE BigData Cup 2026). **Final entry: public LB PQ 0.40; out-of-fold PQ 0.451** (5 folds grouped by image,
+scored against every annotator record), versus 0.340 for one annotator scored against another.
+
+## For the judging committee
+
+| what | where |
+|---|---|
+| technical report (4 pages) | [`report/main.pdf`](report/main.pdf) (source `report/main.tex`) |
+| **reproduce the submission, no training** | [`notebooks/reproduce_final_submission.ipynb`](notebooks/reproduce_final_submission.ipynb) |
+| model weights (25 files, 937 MB, SHA-256 checked) | [`weights/`](weights/) — 20 YOLO11s detectors + 5 U-Net refiners |
+| the exact CSV uploaded to Kaggle | [`results/submission_final.csv`](results/submission_final.csv) |
+| pinned package versions | [`requirements.txt`](requirements.txt) (Python 3.11) |
+| inference code used by the notebook | [`src/reproduce.py`](src/reproduce.py) |
+| full training pipeline (Kaggle T4 kernel) | [`src/`](src/) → assembled by `scripts/build_notebook.py` into [`notebooks/submission.ipynb`](notebooks/submission.ipynb) |
+| every experiment, including failures | [`PORTING.md`](PORTING.md) |
+
+```bash
+pip install -r requirements.txt
+# put the competition data at data/MAGFiLO_1.0_Kaggle_2026/ (or set FILAMENT_DATA=/path/to/it)
+jupyter notebook notebooks/reproduce_final_submission.ipynb
+```
+
+On a laptop CPU the full test set takes ~1.7 h (minutes on a GPU); all 1,218 predicted instances
+are bit-identical to `results/submission_final.csv`.
+
+**Pipeline in one paragraph.** 20 YOLO11s fold detectors (4 training runs × 5 grouped folds) propose
+boxes on each native 2048×2048 image; each box's confidence is scaled by a predicted
+*annotator-agreement class* (drawn by most / half / a minority of annotators). Weighted boxes fusion
+merges the 20 box sets. Five crop U-Nets (ResNet34; inputs image, CLAHE, box seed) draw one mask per
+fused box at native resolution with flip TTA. Instances are kept by score, cleaned, and made strictly
+non-overlapping before RLE encoding. See the report for design rationale and evaluation.
+
+---
+
+## Working notes (development history)
 
 Kaggle: https://www.kaggle.com/competitions/filament-segmentation-2026
 (IEEE BigData Cup 2026). Deadline **2026-11-15 06:00 UTC**, $3,000 prize.

@@ -10,3 +10,16 @@ __pycache__/
 *.npz
 .DS_Store
 .claude/
+
+# the final ensemble's weights ARE committed (organisers require them in the repo)
+!weights/
+!weights/**
+!weights/**/*.pt
+# report build artefacts
+report/*.aux
+report/*.log
+report/*.out
+report/*.bbl
+report/*.blg
+kaggle_comp_report_fi_segm_2026.zip
+report/main_backup.tex
